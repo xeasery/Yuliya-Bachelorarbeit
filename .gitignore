@@ -1,0 +1,9 @@
+# binaries
+tinyfaas-linux-amd64
+cmd/manager/rproxy-linux-amd64.bin
+
+# docker runtime blobs
+pkg/docker/runtimes-amd64/**/blob.tar.gz
+
+# temp
+tmp/
