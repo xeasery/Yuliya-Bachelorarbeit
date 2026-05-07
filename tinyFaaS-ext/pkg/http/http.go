@@ -1,14 +1,17 @@
 package http
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 
+	"github.com/OpenFogStack/tinyFaaS/pkg/cluster"
 	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
 )
 
-func Start(r *rproxy.RProxy, listenAddr string) {
+func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {
 
 	mux := http.NewServeMux()
 
@@ -36,19 +39,80 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 			headers[k] = v[0]
 		}
 
-		s, res := r.Call(p, req_body, async, headers)
+		nodes := reg.ListNodes()
+		node := cluster.PickNode(nodes)
 
-		switch s {
-		case rproxy.StatusOK:
-			w.WriteHeader(http.StatusOK)
-			w.Write(res)
-		case rproxy.StatusAccepted:
-			w.WriteHeader(http.StatusAccepted)
-		case rproxy.StatusNotFound:
-			w.WriteHeader(http.StatusNotFound)
-		case rproxy.StatusError:
-			w.WriteHeader(http.StatusInternalServerError)
+		if node == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
 		}
+
+		if err := reg.ActivateNode(node); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		reg.IncLoad(node.ID)
+		defer reg.DecLoad(node.ID)
+
+		if node.Local {
+			status, res := r.Call(p, req_body, async, headers)
+
+			// only mark usage if successful update last used
+
+			if status == rproxy.StatusOK || status == rproxy.StatusAccepted {
+				reg.TouchNode(node.ID)
+			}
+
+			switch status {
+			case rproxy.StatusOK:
+				w.WriteHeader(http.StatusOK)
+				w.Write(res)
+			case rproxy.StatusAccepted:
+				w.WriteHeader(http.StatusAccepted)
+			case rproxy.StatusNotFound:
+				w.WriteHeader(http.StatusNotFound)
+			case rproxy.StatusError:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+
+			return
+
+		}
+		log.Printf("forwarding to remote node %s at %s", node.ID, node.Address)
+
+		url := fmt.Sprintf("http://%s/%s", node.Address, p)
+
+		forwardReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(req_body))
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		for k, v := range headers {
+			forwardReq.Header.Set(k, v)
+		}
+
+		resp, err := http.DefaultClient.Do(forwardReq)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
+			reg.TouchNode(node.ID)
+		}
+
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
+
 	})
 
 	log.Printf("Starting HTTP server on %s", listenAddr)
