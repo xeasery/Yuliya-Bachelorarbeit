@@ -4,8 +4,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
 	"github.com/pfandzelter/go-coap"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
 )
 
 const async = false

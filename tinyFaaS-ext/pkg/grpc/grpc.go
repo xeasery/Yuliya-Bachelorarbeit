@@ -6,8 +6,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/grpc/tinyfaas"
-	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/grpc/tinyfaas"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )

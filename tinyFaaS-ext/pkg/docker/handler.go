@@ -22,8 +22,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/manager"
-	"github.com/OpenFogStack/tinyFaaS/pkg/util"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/manager"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/util"
 )
 
 const (

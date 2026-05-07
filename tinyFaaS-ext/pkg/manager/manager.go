@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/util"
 	"github.com/google/uuid"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/util"
 )
 
 const (

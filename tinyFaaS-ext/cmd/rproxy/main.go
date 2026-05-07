@@ -9,10 +9,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/coap"
-	"github.com/OpenFogStack/tinyFaaS/pkg/grpc"
-	tfhttp "github.com/OpenFogStack/tinyFaaS/pkg/http"
-	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/cluster"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/coap"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/grpc"
+	tfhttp "github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/http"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
 )
 
 func main() {
@@ -48,6 +49,8 @@ func main() {
 	}
 
 	r := rproxy.New()
+	reg := cluster.NewRegistry()
+	cluster.StartController(reg)
 
 	// CoAP
 	if listenAddr, ok := listenAddrs["coap"]; ok {
@@ -57,7 +60,7 @@ func main() {
 	// HTTP
 	if listenAddr, ok := listenAddrs["http"]; ok {
 		log.Printf("starting http server on %s", listenAddr)
-		go tfhttp.Start(r, listenAddr)
+		go tfhttp.Start(r, reg, listenAddr)
 	}
 	// GRPC
 	if listenAddr, ok := listenAddrs["grpc"]; ok {

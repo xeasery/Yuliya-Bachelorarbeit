@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/xeasery/Yuliya-Bachelorarbeit/pkg/tinkerforgefunc"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/tinkerforgefunc"
 )
 
 const (

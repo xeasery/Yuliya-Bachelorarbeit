@@ -7,8 +7,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/cluster"
-	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/cluster"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
 )
 
 func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {

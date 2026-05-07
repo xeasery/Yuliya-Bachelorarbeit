@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/tinkerforgefunc"
 )
 
 type Registry struct {

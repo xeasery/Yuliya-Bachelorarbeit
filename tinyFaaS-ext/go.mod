@@ -1,4 +1,4 @@
-module github.com/OpenFogStack/tinyFaaS
+module github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext
 
 go 1.22
 
@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/Tinkerforge/go-api-bindings v0.0.0-20251007081947-31c940a0b378 // indirect
 	github.com/containerd/containerd v1.7.18 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
