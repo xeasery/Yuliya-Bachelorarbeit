@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/cluster"
@@ -14,7 +15,39 @@ import (
 	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/grpc"
 	tfhttp "github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/http"
 	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/tinkerforgefunc"
 )
+
+// Tinkerforge relay connection defaults, overridable via env vars so a
+// single hardcoded connection isn't duplicated across the codebase.
+const (
+	defaultTinkerforgeHost = "localhost"
+	defaultTinkerforgePort = 4223
+	defaultTinkerforgeUID  = "YOUR_UID"
+)
+
+func tinkerforgeConfigFromEnv() (host string, port int, uid string) {
+	host = defaultTinkerforgeHost
+	if v := os.Getenv("TINKERFORGE_HOST"); v != "" {
+		host = v
+	}
+
+	port = defaultTinkerforgePort
+	if v := os.Getenv("TINKERFORGE_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			port = p
+		} else {
+			log.Printf("invalid TINKERFORGE_PORT %q, using default %d", v, defaultTinkerforgePort)
+		}
+	}
+
+	uid = defaultTinkerforgeUID
+	if v := os.Getenv("TINKERFORGE_UID"); v != "" {
+		uid = v
+	}
+
+	return host, port, uid
+}
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -49,7 +82,36 @@ func main() {
 	}
 
 	r := rproxy.New()
-	reg := cluster.NewRegistry()
+
+	tfHost, tfPort, tfUID := tinkerforgeConfigFromEnv()
+	ctrl := tinkerforgefunc.NewTinkerforgeController(tfHost, tfPort, tfUID)
+
+	funcs := cluster.NewFunctionStore()
+	reg := cluster.NewRegistry(ctrl, funcs)
+
+	// TODO: replace with real node discovery/registration. Hardcoded for now:
+	// the local machine (always active, never power-cycled via relay) plus
+	// two remote edge nodes on relay channels 0 and 1, starting asleep.
+	reg.AddNode(cluster.Node{
+		ID:     "local",
+		Local:  true,
+		Status: cluster.NodeActive,
+	})
+	reg.AddNode(cluster.Node{
+		ID:             "edge-1",
+		Address:        "192.168.1.101:8000",
+		ManagerAddress: "192.168.1.101:8080",
+		Channel:        0,
+		Status:         cluster.NodeSleeping,
+	})
+	reg.AddNode(cluster.Node{
+		ID:             "edge-2",
+		Address:        "192.168.1.102:8000",
+		ManagerAddress: "192.168.1.102:8080",
+		Channel:        1,
+		Status:         cluster.NodeSleeping,
+	})
+
 	cluster.StartController(reg)
 
 	// CoAP
@@ -85,8 +147,12 @@ func main() {
 		log.Printf("have body: %s", newStr)
 
 		var def struct {
-			FunctionResource   string   `json:"name"`
-			FunctionContainers []string `json:"ips"`
+			FunctionResource   string            `json:"name"`
+			FunctionContainers []string          `json:"ips"`
+			FunctionEnv        string            `json:"env"`
+			FunctionThreads    int               `json:"threads"`
+			FunctionEnvs       map[string]string `json:"envs"`
+			FunctionZip        []byte            `json:"zip"`
 		}
 
 		err := json.Unmarshal([]byte(newStr), &def)
@@ -110,6 +176,20 @@ func main() {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
+
+			fnDef := cluster.FunctionDef{
+				Env:     def.FunctionEnv,
+				Threads: def.FunctionThreads,
+				Envs:    def.FunctionEnvs,
+				Zip:     def.FunctionZip,
+			}
+			funcs.Set(def.FunctionResource, fnDef)
+
+			// deploy-on-wake only reaches nodes at the moment they wake up,
+			// so nodes that are already active need this function pushed
+			// to them now
+			reg.BroadcastFunction(def.FunctionResource, fnDef)
+
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("OK"))
@@ -123,6 +203,8 @@ func main() {
 				return
 			}
 
+			funcs.Remove(def.FunctionResource)
+			reg.BroadcastDelete(def.FunctionResource)
 		}
 	})
 

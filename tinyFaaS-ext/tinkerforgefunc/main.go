@@ -1,9 +1,10 @@
 package tinkerforgefunc
 
 import (
+	"fmt"
 	"log"
 
-	"github.com/Tinkerforge/go-api-bindings/industrial_dual_relay_v2"
+	"github.com/Tinkerforge/go-api-bindings/industrial_dual_relay_bricklet"
 	"github.com/Tinkerforge/go-api-bindings/ipconnection"
 )
 
@@ -21,54 +22,45 @@ func NewTinkerforgeController(host string, port int, uid string) *TinkerforgeCon
 	}
 }
 
-func (t *TinkerforgeController) PowerOn(channel int) error {
+// setChannel connects to the relay and sets the given channel to on/off,
+// leaving the other channel's current state untouched.
+func (t *TinkerforgeController) setChannel(channel int, on bool) error {
 	ipcon := ipconnection.New()
 	defer ipcon.Close()
 
-	err := ipcon.Connect(t.host, t.port)
+	err := ipcon.Connect(fmt.Sprintf("%s:%d", t.host, t.port))
 	if err != nil {
 		return err
 	}
 
-	relay, err := industrial_dual_relay_v2.New(t.uid, ipcon)
+	relay, err := industrial_dual_relay_bricklet.New(t.uid, &ipcon)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("Tinkerforge: powering ON channel %d", channel)
+	c0, c1, err := relay.GetValue()
+	if err != nil {
+		return err
+	}
 
 	switch channel {
 	case 0:
-		return relay.SetValue([2]bool{true, false})
+		c0 = on
 	case 1:
-		return relay.SetValue([2]bool{false, true})
+		c1 = on
 	default:
-		return relay.SetValue([2]bool{true, true})
+		return fmt.Errorf("invalid relay channel %d", channel)
 	}
+
+	return relay.SetValue(c0, c1)
+}
+
+func (t *TinkerforgeController) PowerOn(channel int) error {
+	log.Printf("Tinkerforge: powering ON channel %d", channel)
+	return t.setChannel(channel, true)
 }
 
 func (t *TinkerforgeController) PowerOff(channel int) error {
-	ipcon := ipconnection.New()
-	defer ipcon.Close()
-
-	err := ipcon.Connect(t.host, t.port)
-	if err != nil {
-		return err
-	}
-
-	relay, err := industrial_dual_relay_v2.New(t.uid, ipcon)
-	if err != nil {
-		return err
-	}
-
 	log.Printf("Tinkerforge: powering OFF channel %d", channel)
-
-	switch channel {
-	case 0:
-		return relay.SetValue([2]bool{false, false})
-	case 1:
-		return relay.SetValue([2]bool{false, false})
-	default:
-		return relay.SetValue([2]bool{false, false})
-	}
+	return t.setChannel(channel, false)
 }

@@ -1,50 +1,52 @@
 import base64
+import io
+
 import numpy as np
+from PIL import Image
+
+# cap dimensions so a large upload can't blow up memory/CPU on a constrained
+# edge device
+MAX_SIZE = 512
+
 
 def fn(*args):
     try:
         if len(args) == 0 or args[0] is None:
             return "ERROR: no input"
 
-        size = 256
-
-        # decode base64 → bytes
+        # input is a base64-encoded image file (jpg/png/...), not raw pixels
         img_bytes = base64.b64decode(args[0])
+        img = Image.open(io.BytesIO(img_bytes)).convert("L")
 
-        # convert to numpy
-        img = np.frombuffer(img_bytes, dtype=np.uint8)
+        if img.width > MAX_SIZE or img.height > MAX_SIZE:
+            img.thumbnail((MAX_SIZE, MAX_SIZE))
 
-        # enforce fixed size (THIS fixes your error)
-        expected = size * size
+        pixels = np.asarray(img, dtype=np.float64)
 
-        if len(img) < expected:
-            img = np.pad(img, (0, expected - len(img)))
-        else:
-            img = img[:expected]
+        # Sobel operator, vectorized over the whole image (no per-pixel
+        # Python loop -- the original nested-loop version took seconds per
+        # image and didn't scale past small sizes)
+        gx = np.zeros_like(pixels)
+        gy = np.zeros_like(pixels)
 
-        img = img.reshape((size, size))
+        gx[1:-1, 1:-1] = (
+            -pixels[:-2, :-2] + pixels[:-2, 2:]
+            - 2 * pixels[1:-1, :-2] + 2 * pixels[1:-1, 2:]
+            - pixels[2:, :-2] + pixels[2:, 2:]
+        )
+        gy[1:-1, 1:-1] = (
+            -pixels[:-2, :-2] - 2 * pixels[:-2, 1:-1] - pixels[:-2, 2:]
+            + pixels[2:, :-2] + 2 * pixels[2:, 1:-1] + pixels[2:, 2:]
+        )
 
-        # simple edge detection (Sobel-like)
-        Kx = np.array([[-1,0,1],[-2,0,2],[-1,0,1]])
-        Ky = np.array([[-1,-2,-1],[0,0,0],[1,2,1]])
-
-        def conv(image, kernel):
-            h, w = image.shape
-            out = np.zeros_like(image)
-            for i in range(1, h-1):
-                for j in range(1, w-1):
-                    region = image[i-1:i+2, j-1:j+2]
-                    out[i,j] = np.sum(region * kernel)
-            return out
-
-        gx = conv(img, Kx)
-        gy = conv(img, Ky)
-
-        edges = np.sqrt(gx**2 + gy**2)
+        edges = np.sqrt(gx ** 2 + gy ** 2)
         edges = (edges / (edges.max() + 1e-9) * 255).astype(np.uint8)
 
-        # return RAW bytes → base64
-        return base64.b64encode(edges.tobytes()).decode()
+        # return a real PNG, base64-encoded, so the caller can decode it
+        # straight into a viewable image without knowing width/height/mode
+        out = io.BytesIO()
+        Image.fromarray(edges, mode="L").save(out, format="PNG")
+        return base64.b64encode(out.getvalue()).decode()
 
     except Exception as e:
         return f"ERROR: {str(e)}"

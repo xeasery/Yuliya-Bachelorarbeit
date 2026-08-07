@@ -66,6 +66,13 @@ func (db *DockerBackend) Stop() error {
 	return nil
 }
 
+// Ping verifies the Docker daemon is actually reachable, used to back the
+// management service's /health endpoint.
+func (db *DockerBackend) Ping() error {
+	_, err := db.client.Ping(context.Background())
+	return err
+}
+
 func (db *DockerBackend) Create(name string, env string, threads int, filedir string, envs map[string]string) (manager.Handler, error) {
 
 	// make a unique function name by appending uuid string to function name

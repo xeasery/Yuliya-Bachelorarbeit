@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenFogStack/tinyFaaS/pkg/docker"
-	"github.com/OpenFogStack/tinyFaaS/pkg/manager"
 	"github.com/google/uuid"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/docker"
+	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/manager"
 )
 
 const (
@@ -169,6 +169,7 @@ func main() {
 	r.HandleFunc("/wipe", s.wipeHandler)
 	r.HandleFunc("/logs", s.logsHandler)
 	r.HandleFunc("/uploadURL", s.urlUploadHandler)
+	r.HandleFunc("/health", s.healthHandler)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
@@ -412,6 +413,21 @@ func (s *server) urlUploadHandler(w http.ResponseWriter, r *http.Request) {
 	// return success
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, res)
+}
+
+func (s *server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := s.ms.Healthy(); err != nil {
+		log.Println("health check failed:", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *server) touchHandler(w http.ResponseWriter, r *http.Request) {

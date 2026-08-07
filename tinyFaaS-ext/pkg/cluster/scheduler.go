@@ -2,22 +2,16 @@ package cluster
 
 const LoadThreshold = 10
 
-// PickNode selects the best node for a request.
+// PickNode selects the best node for a request from a snapshot of nodes.
 // It only decides — it does NOT mutate state or activate anything.
-func PickNode(nodes []*Node) *Node {
-	if len(nodes) == 0 {
-		return nil
-	}
-
+func PickNode(nodes []Node) (Node, bool) {
 	var bestActive *Node
 	var bestIdleActive *Node
 	var bestSleeping *Node
 	var fallback *Node
 
-	for _, n := range nodes {
-		if n == nil {
-			continue
-		}
+	for i := range nodes {
+		n := &nodes[i]
 
 		// ignore dead nodes completely
 		if n.Status == NodeDead {
@@ -58,19 +52,23 @@ func PickNode(nodes []*Node) *Node {
 
 	// 1. best healthy active node
 	if bestActive != nil {
-		return bestActive
+		return *bestActive, true
 	}
 
 	// 2. any active node under pressure (still better than waking)
 	if bestIdleActive != nil {
-		return bestIdleActive
+		return *bestIdleActive, true
 	}
 
 	// 3. sleeping node (will trigger activation in HTTP layer)
 	if bestSleeping != nil {
-		return bestSleeping
+		return *bestSleeping, true
 	}
 
 	// 4. absolute fallback
-	return fallback
+	if fallback != nil {
+		return *fallback, true
+	}
+
+	return Node{}, false
 }

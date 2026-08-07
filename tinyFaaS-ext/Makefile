@@ -1,5 +1,5 @@
 PROJECT_NAME := "tinyFaaS"
-PKG := "github.com/OpenFogStack/$(PROJECT_NAME)"
+PKG := "github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext"
 GO_FILES := $(shell find . -name '*.go' | grep -v /vendor/ | grep -v /ext/ | grep -v _test.go)
 TEST_DIR := ./test
 

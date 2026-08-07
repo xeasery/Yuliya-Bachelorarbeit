@@ -40,14 +40,14 @@ func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {
 		}
 
 		nodes := reg.ListNodes()
-		node := cluster.PickNode(nodes)
+		node, ok := cluster.PickNode(nodes)
 
-		if node == nil {
+		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 
-		if err := reg.ActivateNode(node); err != nil {
+		if err := reg.ActivateNode(node.ID); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}

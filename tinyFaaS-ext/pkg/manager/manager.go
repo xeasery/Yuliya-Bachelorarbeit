@@ -36,6 +36,7 @@ type ManagementService struct {
 type Backend interface {
 	Create(name string, env string, threads int, filedir string, envs map[string]string) (Handler, error)
 	Stop() error
+	Ping() error
 }
 
 type Handler interface {
@@ -148,12 +149,22 @@ func (ms *ManagementService) createFunction(name string, env string, threads int
 
 	// tell rproxy about the new function
 	// curl -X POST http://localhost:80/add -d '{"name": "<name>", "ips": ["<ip1>", "<ip2>"]}'
+	// env/threads/envs/zip are included so the cluster leader can redeploy
+	// this function to other nodes when they wake from sleep
 	d := struct {
-		FunctionName string   `json:"name"`
-		FunctionIPs  []string `json:"ips"`
+		FunctionName    string            `json:"name"`
+		FunctionIPs     []string          `json:"ips"`
+		FunctionEnv     string            `json:"env"`
+		FunctionThreads int               `json:"threads"`
+		FunctionEnvs    map[string]string `json:"envs"`
+		FunctionZip     []byte            `json:"zip"`
 	}{
-		FunctionName: name,
-		FunctionIPs:  fh.IPs(),
+		FunctionName:    name,
+		FunctionIPs:     fh.IPs(),
+		FunctionEnv:     env,
+		FunctionThreads: threads,
+		FunctionEnvs:    envs,
+		FunctionZip:     funczip,
 	}
 
 	b, err := json.Marshal(d)
@@ -363,6 +374,12 @@ func (ms *ManagementService) UrlUpload(name string, env string, threads int, fun
 	}
 
 	return r, nil
+}
+
+// Healthy reports whether the backend (e.g. the Docker daemon) is actually
+// reachable, not just that the management service's own HTTP server is up.
+func (ms *ManagementService) Healthy() error {
+	return ms.backend.Ping()
 }
 
 func (ms *ManagementService) Stop() error {

@@ -1,0 +1,33 @@
+# systemd unit for the tinyFaaS management service (and the rproxy it
+# spawns) on a cluster node (leader or edge). This is the stock, unmodified
+# tinyfaas-<os>-<arch> binary produced by `make build` -- systemd's only job
+# is to start it on boot and restart it if it dies, since a relay power-on
+# gives the node a fresh boot with nothing running yet.
+#
+# Install:
+#   1. copy the built binary for this host's arch, e.g. tinyfaas-linux-arm64,
+#      to /opt/tinyfaas/tinyfaas-mgmt
+#   2. copy this file to /etc/systemd/system/tinyfaas.service
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now tinyfaas
+#
+# The service user must be able to reach the Docker socket (member of the
+# `docker` group) and needs a writable working directory for tinyFaaS's
+# ./tmp scratch space.
+
+[Unit]
+Description=tinyFaaS management service
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=tinyfaas
+WorkingDirectory=/opt/tinyfaas
+ExecStart=/opt/tinyfaas/tinyfaas-mgmt
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

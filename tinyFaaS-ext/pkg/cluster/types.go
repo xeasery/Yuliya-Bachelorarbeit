@@ -14,9 +14,10 @@ const (
 
 // Core cluster node representation
 type Node struct {
-	ID      string `json:"id"`
-	Address string `json:"address"` // IP or host of node
-	Channel int    `json:"channel"` // Tinkerforge relay channel
+	ID             string `json:"id"`
+	Address        string `json:"address"`         // rproxy HTTP address (IP:port), used to forward function calls
+	ManagerAddress string `json:"manager_address"` // management service address (IP:port), used for health checks and function deployment
+	Channel        int    `json:"channel"`         // Tinkerforge relay channel
 
 	Status NodeStatus `json:"status"`
 	Load   int        `json:"load"`

@@ -3,8 +3,6 @@ package cluster
 import (
 	"log"
 	"time"
-
-	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/tinkerforgefunc"
 )
 
 const (
@@ -15,13 +13,6 @@ const (
 
 func StartController(reg *Registry) {
 	go func() {
-
-		ctrl := tinkerforgefunc.NewTinkerforgeController(
-			"localhost",
-			4223,
-			"YOUR_UID",
-		)
-
 		for {
 			time.Sleep(CheckInterval)
 
@@ -35,7 +26,9 @@ func StartController(reg *Registry) {
 			}
 
 			for _, n := range nodes {
-				if n == nil {
+				// the local node isn't behind a relay and must never be
+				// power-cycled
+				if n.Local {
 					continue
 				}
 
@@ -61,19 +54,10 @@ func StartController(reg *Registry) {
 
 				log.Printf("controller: scaling down node %s", n.ID)
 
-				err := ctrl.PowerOff(n.Channel)
-				if err != nil {
+				if err := reg.DeactivateNode(n.ID); err != nil {
 					log.Printf("controller: failed to power off %s: %v", n.ID, err)
 					continue
 				}
-
-				// update state safely via registry rules
-				func() {
-					reg.mu.Lock()
-					defer reg.mu.Unlock()
-
-					n.Status = NodeSleeping
-				}()
 
 				activeCount--
 			}
