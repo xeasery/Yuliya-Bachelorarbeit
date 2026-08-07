@@ -1,3 +1,6 @@
+# macOS
+.DS_Store
+
 # binaries
 tinyfaas-linux-amd64
 cmd/manager/rproxy-linux-amd64.bin

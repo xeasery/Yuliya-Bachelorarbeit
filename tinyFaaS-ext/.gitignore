@@ -1,0 +1,15 @@
+# build outputs
+/tinyfaas-*
+/cmd/manager/rproxy-*.bin
+
+# docker runtime blobs, built per-arch by `make`
+/pkg/docker/runtimes-*/
+
+# macOS
+.DS_Store
+
+# test/run artifacts
+/tf_test.out
+/tf_run.log
+/.venv
+/tmp/
