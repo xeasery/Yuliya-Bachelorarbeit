@@ -55,6 +55,11 @@ func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {
 		reg.IncLoad(node.ID)
 		defer reg.DecLoad(node.ID)
 
+		// tell the client which node served this request: without it there is
+		// no way to attribute an invocation to a node from the outside, and
+		// therefore no way to observe the scheduler waking and draining nodes
+		w.Header().Set("X-tinyFaaS-Node", node.ID)
+
 		if node.Local {
 			status, res := r.Call(p, req_body, async, headers)
 

@@ -208,6 +208,20 @@ func main() {
 		}
 	})
 
+	// /nodes exposes the cluster's power state so a benchmark run can record
+	// how many nodes were actually awake over time. Energy numbers alone
+	// can't distinguish "the workload got cheaper" from "the scheduler
+	// powered a node down", which is the whole effect under evaluation.
+	server.HandleFunc("/nodes", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != "GET" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(reg.ListNodes())
+	})
+
 	server.HandleFunc("/lastused", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != "GET" {
 			w.WriteHeader(http.StatusMethodNotAllowed)
