@@ -11,9 +11,13 @@ import (
 	"time"
 )
 
-// activationTimeout bounds how long a caller will wait for a node that is
-// already being woken up by another goroutine.
-const activationTimeout = 30 * time.Second
+// activationSafetyTimeout is an outer bound for a node that never finishes
+// waking (hardware fault, hung deploy, etc). It is not meant to fire in the
+// normal case: followers otherwise learn the real outcome the instant the
+// waking goroutine finishes, via the node's activation channel, rather than
+// on some independently-guessed schedule that can drift out of sync with
+// how long waking actually takes.
+const activationSafetyTimeout = 5 * time.Minute
 
 // healthClient is used for readiness polling: short timeout, called
 // repeatedly, so a single hung attempt shouldn't stall activation for long.
@@ -40,19 +44,39 @@ type PowerController interface {
 	PowerOff(channel int) error
 }
 
+// activation tracks a single in-flight wake attempt for a node. done is
+// closed once the attempt finishes, at which point err holds the result.
+// Followers that arrive while a node is NodeWaking wait on done instead of
+// polling status on a fixed schedule.
+type activation struct {
+	done chan struct{}
+	err  error
+}
+
+func (a *activation) wait(id string) error {
+	select {
+	case <-a.done:
+		return a.err
+	case <-time.After(activationSafetyTimeout):
+		return fmt.Errorf("timed out waiting for node %s to activate", id)
+	}
+}
+
 type Registry struct {
 	nodes map[string]*Node
 	mu    sync.RWMutex
 
-	ctrl  PowerController
-	funcs *FunctionStore
+	ctrl        PowerController
+	funcs       *FunctionStore
+	activations map[string]*activation
 }
 
 func NewRegistry(ctrl PowerController, funcs *FunctionStore) *Registry {
 	return &Registry{
-		nodes: make(map[string]*Node),
-		ctrl:  ctrl,
-		funcs: funcs,
+		nodes:       make(map[string]*Node),
+		ctrl:        ctrl,
+		funcs:       funcs,
+		activations: make(map[string]*activation),
 	}
 }
 
@@ -137,8 +161,10 @@ func (r *Registry) SetStatus(id string, status NodeStatus) {
 
 // ActivateNode ensures the node with the given ID is active, powering it on
 // via the Tinkerforge relay if necessary. If another goroutine is already
-// waking the node, it waits (bounded by activationTimeout) instead of
-// triggering a second power-on.
+// waking the node, it waits on that attempt's completion signal instead of
+// triggering a second power-on or polling on its own schedule -- so it
+// learns the real outcome the moment the wake finishes, however long that
+// actually takes.
 func (r *Registry) ActivateNode(id string) error {
 	r.mu.Lock()
 
@@ -153,9 +179,13 @@ func (r *Registry) ActivateNode(id string) error {
 		r.mu.Unlock()
 		return nil
 	case NodeWaking:
+		act := r.activations[id]
 		r.mu.Unlock()
-		return r.waitForActive(id)
+		return act.wait(id)
 	}
+
+	act := &activation{done: make(chan struct{})}
+	r.activations[id] = act
 
 	n.Status = NodeWaking
 	channel := n.Channel
@@ -164,7 +194,27 @@ func (r *Registry) ActivateNode(id string) error {
 
 	log.Printf("activating node %s", id)
 
-	// hardware call outside lock
+	err := r.wakeNode(id, channel, managerAddress)
+
+	r.mu.Lock()
+	delete(r.activations, id)
+	r.mu.Unlock()
+
+	act.err = err
+	close(act.done)
+
+	if err == nil {
+		log.Printf("node %s is active", id)
+	}
+
+	return err
+}
+
+// wakeNode runs the actual wake sequence for a node: power on, wait for
+// readiness, then redeploy known functions. It sets the node's final status
+// (Active or Dead) itself.
+func (r *Registry) wakeNode(id string, channel int, managerAddress string) error {
+	// hardware call outside any lock
 	if err := r.ctrl.PowerOn(channel); err != nil {
 		r.SetStatus(id, NodeDead)
 		return fmt.Errorf("failed to power on node %s: %w", id, err)
@@ -183,8 +233,6 @@ func (r *Registry) ActivateNode(id string) error {
 	r.deployFunctions(id, managerAddress)
 
 	r.SetStatus(id, NodeActive)
-
-	log.Printf("node %s is active", id)
 	return nil
 }
 
@@ -212,41 +260,6 @@ func (r *Registry) DeactivateNode(id string) error {
 	return nil
 }
 
-// waitForActive polls a node's status until it leaves NodeWaking, up to
-// activationTimeout.
-func (r *Registry) waitForActive(id string) error {
-	deadline := time.Now().Add(activationTimeout)
-
-	for time.Now().Before(deadline) {
-		status, ok := r.status(id)
-		if !ok {
-			return fmt.Errorf("unknown node %s", id)
-		}
-
-		switch status {
-		case NodeActive:
-			return nil
-		case NodeWaking:
-			time.Sleep(100 * time.Millisecond)
-		default:
-			return fmt.Errorf("node %s failed to activate (status: %s)", id, status)
-		}
-	}
-
-	return fmt.Errorf("timed out waiting for node %s to activate", id)
-}
-
-func (r *Registry) status(id string) (NodeStatus, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	n, ok := r.nodes[id]
-	if !ok {
-		return "", false
-	}
-	return n.Status, true
-}
-
 // waitForNodeReady polls a node's management API until it responds to
 // /health.
 func waitForNodeReady(managerAddr string) bool {
@@ -265,16 +278,26 @@ func waitForNodeReady(managerAddr string) bool {
 
 // deployFunctions pushes every function known to this registry's function
 // store to a node's management API, e.g. right after it wakes up with no
-// containers running. Failures are logged per function rather than aborting
-// the whole batch.
+// containers running. Functions are deployed concurrently -- sequentially
+// deploying N functions, each with its own slow-build timeout, would make
+// total wake time balloon with every function added -- and failures are
+// logged per function rather than aborting the whole batch.
 func (r *Registry) deployFunctions(nodeID, managerAddr string) {
+	var wg sync.WaitGroup
+
 	for name, def := range r.funcs.All() {
-		if err := deployFunction(managerAddr, name, def); err != nil {
-			log.Printf("failed to deploy function %s to node %s: %v", name, nodeID, err)
-			continue
-		}
-		log.Printf("deployed function %s to node %s", name, nodeID)
+		wg.Add(1)
+		go func(name string, def FunctionDef) {
+			defer wg.Done()
+			if err := deployFunction(managerAddr, name, def); err != nil {
+				log.Printf("failed to deploy function %s to node %s: %v", name, nodeID, err)
+				return
+			}
+			log.Printf("deployed function %s to node %s", name, nodeID)
+		}(name, def)
 	}
+
+	wg.Wait()
 }
 
 // BroadcastFunction pushes a single function to every node that is already

@@ -42,10 +42,11 @@ func (f *fakePowerController) onCallCount() int {
 // fakeNode simulates a node's management API (/health, /upload, /delete)
 // for tests, standing in for a real Raspberry Pi.
 type fakeNode struct {
-	mu         sync.Mutex
-	uploads    []string
-	deletes    []string
-	failUpload map[string]bool
+	mu                 sync.Mutex
+	uploads            []string
+	deletes            []string
+	failUpload         map[string]bool
+	healthFailuresLeft int
 
 	srv *httptest.Server
 }
@@ -55,6 +56,17 @@ func newFakeNode() *fakeNode {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		fn.mu.Lock()
+		fail := fn.healthFailuresLeft > 0
+		if fail {
+			fn.healthFailuresLeft--
+		}
+		fn.mu.Unlock()
+
+		if fail {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +201,58 @@ func TestActivateNode_OneBadFunctionDoesNotKillNode(t *testing.T) {
 	uploads := node.uploadNames()
 	if len(uploads) != 1 || uploads[0] != "fine" {
 		t.Fatalf("expected only the healthy function to be deployed, got %v", uploads)
+	}
+}
+
+func TestActivateNode_FollowerWaitsForRealOutcome(t *testing.T) {
+	withFastHealthCheck(t)
+
+	node := newFakeNode()
+	defer node.close()
+	node.healthFailuresLeft = 1 // forces at least one poll interval before ready
+
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, NewFunctionStore())
+	reg.AddNode(Node{
+		ID:             "edge-1",
+		ManagerAddress: node.addr(),
+		Channel:        0,
+		Status:         NodeSleeping,
+	})
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[0] = reg.ActivateNode("edge-1")
+	}()
+
+	// give the first caller a head start so it reliably wins the
+	// Sleeping->Waking transition; the second caller should then observe
+	// NodeWaking and take the follower path instead of powering on again
+	time.Sleep(2 * time.Millisecond)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[1] = reg.ActivateNode("edge-1")
+	}()
+
+	wg.Wait()
+
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("expected both callers to succeed, got %v and %v", errs[0], errs[1])
+	}
+
+	n, _ := reg.GetNode("edge-1")
+	if n.Status != NodeActive {
+		t.Fatalf("expected node to be active, got %s", n.Status)
+	}
+
+	if got := ctrl.onCallCount(); got != 1 {
+		t.Fatalf("expected exactly one PowerOn call (the follower should not re-trigger a wake), got %d", got)
 	}
 }
 
