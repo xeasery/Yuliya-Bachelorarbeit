@@ -171,6 +171,26 @@ Describe the cluster in a JSON file (see
 `NODES_CONFIG` at it. Without that variable, tinyFaaS runs single-node exactly
 as upstream does.
 
+#### Every node runs this build, not upstream
+
+Install the binary from this repository on **all** cluster machines, leader and
+workers alike. Workers are not stock tinyFaaS nodes: the leader decides a
+worker is ready by polling `/health` on its management API, and that endpoint
+does not exist upstream. A worker running upstream tinyFaaS powers on, never
+answers `/health`, fails the readiness check and is marked dead — so every
+wake fails.
+
+The same binary covers both roles; only the environment differs:
+
+| Role | Environment | Behaviour |
+| --- | --- | --- |
+| Leader | `NODES_CONFIG`, `TINKERFORGE_UID`, `POWER_AWARE` | Schedules across the cluster, powers nodes on and off. |
+| Worker | *(none)* | Plain single-node tinyFaaS. Never power-cycles anything. |
+
+Workers need no configuration and no Tinkerforge connection: with
+`NODES_CONFIG` unset the registry holds only the local node, which is never
+power-cycled, so the relay is never contacted.
+
 ```bash
 NODES_CONFIG=./deploy/nodes.json TINKERFORGE_UID=ABC ./rproxy ...
 ```
