@@ -7,6 +7,11 @@ Work through this in order. Each step ends with a check — do not move on
 until it passes, because most failures here are silent later rather than loud
 now.
 
+One exception to the ordering: read step 0 first, but the final action in it
+(0.3, enabling the read-only root) happens *after* a worker is fully
+configured, since nothing written afterwards persists. The guide points back
+to it at the right moment.
+
 ## What you are building
 
 ```
@@ -45,21 +50,99 @@ that is on the order of a hundred unclean power cuts per node, and SD card
 corruption is the expected outcome, usually partway through an experiment.
 
 **Put the workers on a read-only root filesystem** before running anything
-long:
+long. The leader does not need this — it is never power-cycled.
+
+The alternative would be a graceful shutdown before each cut, but that adds
+~15 s to every power-off, and that delay lands directly in the latency and
+energy figures being measured. It would distort the result rather than just
+cost time.
+
+### Do not simply enable the overlay
+
+`raspi-config`'s Overlay File System puts the *entire* root in a RAM overlay
+and discards every write at boot. That includes `/var/lib/docker` — so the
+pre-built `edge` image (step 4) would be lost on every power cut, and every
+wake would re-download and reinstall ~24 MB of wheels before the node could
+serve. That makes wakes far slower and defeats the caching the design relies
+on.
+
+Overlay the root, but give Docker persistent storage outside it.
+
+### 0.1 Persistent storage for Docker
+
+A USB SSD is the better choice — the repeated image and container churn is
+hard on SD cards even without power cuts — but a second partition works.
+
+```bash
+lsblk                                    # find the device, e.g. /dev/sda1
+sudo mkfs.ext4 -L dockerdata /dev/sda1
+
+sudo systemctl stop docker
+sudo mkdir -p /mnt/dockerdata
+sudo mount /dev/sda1 /mnt/dockerdata
+sudo rsync -aHAX /var/lib/docker/ /mnt/dockerdata/   # keep existing images
+sudo umount /mnt/dockerdata
+
+echo 'LABEL=dockerdata /var/lib/docker ext4 defaults,noatime,nofail 0 2' \
+  | sudo tee -a /etc/fstab
+sudo mount -a && sudo systemctl start docker
+```
+
+Check:
+
+```bash
+docker info | grep "Docker Root Dir"     # /var/lib/docker, on the new filesystem
+```
+
+`nofail` matters: without it, a worker whose SSD did not enumerate in time
+refuses to finish booting, and a node that will not boot unattended breaks
+the whole design.
+
+### 0.2 Keep the logs
+
+journald writes to `/var/log`, which is inside the overlay — so a worker's
+logs disappear exactly when a power cut makes you want to read them. Put the
+journal on the persistent disk:
+
+```bash
+sudo mkdir -p /mnt/dockerdata/journal
+sudo sed -i 's|^#\?Storage=.*|Storage=persistent|' /etc/systemd/journald.conf
+echo '/mnt/dockerdata/journal /var/log/journal none bind,nofail 0 0' \
+  | sudo tee -a /etc/fstab
+```
+
+### 0.3 Enable the overlay last
+
+Finish **all** remaining configuration first — Docker, tinyFaaS, the systemd
+unit, and the pre-built function image (steps 1, 2 and 4). Once the overlay
+is on, none of it persists.
 
 ```bash
 sudo raspi-config      # Performance Options → Overlay File System → enable
+                       # answer yes to write-protecting the boot partition too
+sudo reboot
 ```
 
-Docker needs a writable data directory, so give it one that is not on the
-overlay — a second partition, or an external USB SSD, mounted at
-`/var/lib/docker`. An SSD is worth it here anyway: the repeated image pulls
-and container churn are hard on SD cards even without the power cuts.
+Check — this pair is the whole test, that the root discards writes while
+Docker's cache survives:
 
-The alternative is a graceful shutdown before each cut, but that adds ~15 s
-to every power-off, and that delay lands directly in the latency and energy
-figures you are trying to measure — it would distort the result rather than
-just cost time.
+```bash
+findmnt / | head -2          # shows overlay, not /dev/mmcblk0p2
+sudo touch /root/canary && sudo reboot
+ls /root/canary              # must be gone
+docker images                # the edge image must still be here
+```
+
+### 0.4 Changing anything afterwards
+
+With the overlay active, config edits, `/etc/fstab` and `apt install` do not
+survive a reboot. To make a change:
+
+```bash
+sudo raspi-config nonint disable_overlayfs && sudo reboot
+# ...make the change...
+sudo raspi-config nonint enable_overlayfs && sudo reboot
+```
 
 ## 1. Build once
 
@@ -222,6 +305,13 @@ wake that same work has to finish before the node can serve.
 If you ever change `myfunc/edge/requirements.txt`, re-check this: a dependency
 without a musllinux wheel would have to compile, and would fail.
 
+### Now enable the read-only root
+
+This is the point where the worker's configuration is complete — Docker,
+tinyFaaS, the systemd unit and the cached function image are all in place.
+Go back and do **step 0.3** on this worker before it starts getting
+power-cycled in anger.
+
 ## 4b. Do one worker before wiring four
 
 Bring up the leader plus **one** worker on one relay channel, and get a full
@@ -304,3 +394,6 @@ bars, and wake timing in particular varies a lot.
 | No node-state timeline in results | Sampler could not reach `/nodes`. It is on **8081**, not 8080. |
 | Energy CSV has only a header | Wrong `ENERGY_UID`, or the bricklet is not connected. |
 | Workers stop booting after some days | SD card corruption from hard power cuts — see step 0. |
+| `edge` image gone after a power cut, wakes suddenly slow | `/var/lib/docker` is inside the overlay. It needs persistent storage (step 0.1). |
+| A worker hangs at boot | Persistent disk missing from `/etc/fstab` without `nofail`. |
+| Config change vanished after reboot | The overlay is active; see step 0.4. |
