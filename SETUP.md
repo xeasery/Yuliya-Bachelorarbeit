@@ -198,11 +198,39 @@ done
 
 Each should return base64 PNG data, not `ERROR:` and not a 404.
 
-Watch that first build. If `pip install` **fails** rather than merely being
-slow, you have hit the Alpine/musl problem: the runtime image is
-`python:3.11-alpine`, and if numpy or Pillow have no musllinux wheel for your
-architecture, pip tries to compile them and the image has no compiler. Stop
-and fix the base image — do not work around it per-run.
+### Will the dependencies build on Alpine?
+
+Yes — verified on `linux/arm64`. The runtime image is `python:3.11-alpine`
+(musl libc), which cannot use the usual manylinux wheels, and the image has
+no compiler, so a source build would fail outright. Both dependencies publish
+musllinux aarch64 wheels, so pip installs prebuilt binaries:
+
+```
+numpy-2.4.6-cp311-cp311-musllinux_1_2_aarch64.whl    (17.3 MB)
+pillow-12.3.0-cp311-cp311-musllinux_1_2_aarch64.whl   (6.3 MB)
+```
+
+The `edge` function itself was run end to end on that image: a 25 KB JPEG in,
+a 7.9 KB 512×512 grayscale PNG out, 29 ms on an arm64 host. Expect a few
+hundred milliseconds on a Pi.
+
+So the first deploy is a ~24 MB download plus unpacking, not a compile — a
+couple of minutes on a Pi, comfortably inside the 5-minute `DEPLOY_TIMEOUT`.
+It still has to happen **once while the node is powered on**, because on a
+wake that same work has to finish before the node can serve.
+
+If you ever change `myfunc/edge/requirements.txt`, re-check this: a dependency
+without a musllinux wheel would have to compile, and would fail.
+
+## 4b. Do one worker before wiring four
+
+Bring up the leader plus **one** worker on one relay channel, and get a full
+wake/sleep cycle working (step 5) before connecting the other three.
+
+Debugging five machines at once is miserable, and everything that goes wrong
+here — readiness, relay wiring, image caching — goes wrong identically on all
+of them. Prove it once, then replicate. Adding workers afterwards is an edit
+to `nodes.json` and a restart.
 
 ## 5. End-to-end smoke test
 
