@@ -11,7 +11,7 @@ import (
 	"github.com/xeasery/Yuliya-Bachelorarbeit/tinyFaaS-ext/pkg/rproxy"
 )
 
-func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {
+func Start(r *rproxy.RProxy, reg *cluster.Registry, cfg cluster.ControllerConfig, listenAddr string) {
 
 	mux := http.NewServeMux()
 
@@ -40,7 +40,7 @@ func Start(r *rproxy.RProxy, reg *cluster.Registry, listenAddr string) {
 		}
 
 		nodes := reg.ListNodes()
-		node, ok := cluster.PickNode(nodes)
+		node, ok := cluster.PickNode(nodes, cfg.LoadThreshold)
 
 		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)

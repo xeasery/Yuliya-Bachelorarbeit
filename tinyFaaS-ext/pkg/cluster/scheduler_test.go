@@ -3,7 +3,7 @@ package cluster
 import "testing"
 
 func TestPickNode_NoNodes(t *testing.T) {
-	if _, ok := PickNode(nil); ok {
+	if _, ok := PickNode(nil, DefaultLoadThreshold); ok {
 		t.Fatal("expected no node to be picked from an empty set")
 	}
 }
@@ -14,7 +14,7 @@ func TestPickNode_AllDead(t *testing.T) {
 		{ID: "b", Status: NodeDead},
 	}
 
-	if _, ok := PickNode(nodes); ok {
+	if _, ok := PickNode(nodes, DefaultLoadThreshold); ok {
 		t.Fatal("expected no node to be picked when all nodes are dead")
 	}
 }
@@ -26,7 +26,7 @@ func TestPickNode_PrefersLeastLoadedActive(t *testing.T) {
 		{ID: "asleep", Status: NodeSleeping},
 	}
 
-	n, ok := PickNode(nodes)
+	n, ok := PickNode(nodes, DefaultLoadThreshold)
 	if !ok {
 		t.Fatal("expected a node to be picked")
 	}
@@ -37,11 +37,11 @@ func TestPickNode_PrefersLeastLoadedActive(t *testing.T) {
 
 func TestPickNode_FallsBackToOverloadedActiveBeforeSleeping(t *testing.T) {
 	nodes := []Node{
-		{ID: "overloaded", Status: NodeActive, Load: LoadThreshold + 5},
+		{ID: "overloaded", Status: NodeActive, Load: DefaultLoadThreshold + 5},
 		{ID: "asleep", Status: NodeSleeping},
 	}
 
-	n, ok := PickNode(nodes)
+	n, ok := PickNode(nodes, DefaultLoadThreshold)
 	if !ok {
 		t.Fatal("expected a node to be picked")
 	}
@@ -56,7 +56,7 @@ func TestPickNode_FallsBackToSleepingWhenNoneActive(t *testing.T) {
 		{ID: "asleep", Status: NodeSleeping},
 	}
 
-	n, ok := PickNode(nodes)
+	n, ok := PickNode(nodes, DefaultLoadThreshold)
 	if !ok {
 		t.Fatal("expected a node to be picked")
 	}

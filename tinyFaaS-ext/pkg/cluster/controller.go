@@ -5,16 +5,23 @@ import (
 	"time"
 )
 
-const (
-	NodeIdleTimeout = 60 * time.Second
-	CheckInterval   = 10 * time.Second
-	MinActiveNodes  = 1
-)
+// StartController runs the scale-down loop in the background: nodes that
+// have been idle long enough are powered off via the relay.
+//
+// With cfg.Enabled false it does nothing at all, which is the always-on
+// baseline the power-aware configuration is measured against.
+func StartController(reg *Registry, cfg ControllerConfig) {
+	if !cfg.Enabled {
+		log.Printf("controller: power management disabled (baseline mode) — no node will be powered down")
+		return
+	}
 
-func StartController(reg *Registry) {
+	log.Printf("controller: idle timeout %s, check interval %s, min active %d",
+		cfg.IdleTimeout, cfg.CheckInterval, cfg.MinActiveNodes)
+
 	go func() {
 		for {
-			time.Sleep(CheckInterval)
+			time.Sleep(cfg.CheckInterval)
 
 			nodes := reg.ListNodes()
 
@@ -43,12 +50,12 @@ func StartController(reg *Registry) {
 				}
 
 				// keep minimum capacity alive
-				if activeCount <= MinActiveNodes {
+				if activeCount <= cfg.MinActiveNodes {
 					continue
 				}
 
 				// must be idle long enough
-				if time.Since(n.LastUsed) < NodeIdleTimeout {
+				if time.Since(n.LastUsed) < cfg.IdleTimeout {
 					continue
 				}
 

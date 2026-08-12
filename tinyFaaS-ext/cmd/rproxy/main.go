@@ -49,6 +49,32 @@ func tinkerforgeConfigFromEnv() (host string, port int, uid string) {
 	return host, port, uid
 }
 
+// defaultNodes is the single-machine fallback used when NODES_CONFIG is not
+// set: just the local node, no relay-controlled workers. It lets tinyFaaS
+// run unchanged on a developer machine, while a real cluster is described
+// by a config file rather than baked into this binary.
+func defaultNodes() []cluster.Node {
+	return []cluster.Node{
+		{ID: "local", Local: true, Status: cluster.NodeActive},
+	}
+}
+
+func loadTopology() ([]cluster.Node, error) {
+	path := os.Getenv("NODES_CONFIG")
+	if path == "" {
+		log.Printf("cluster: NODES_CONFIG not set, running single-node (local only)")
+		return defaultNodes(), nil
+	}
+
+	nodes, err := cluster.LoadNodes(path)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("cluster: loaded %d nodes from %s", len(nodes), path)
+	return nodes, nil
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetPrefix("rproxy: ")
@@ -89,30 +115,34 @@ func main() {
 	funcs := cluster.NewFunctionStore()
 	reg := cluster.NewRegistry(ctrl, funcs)
 
-	// TODO: replace with real node discovery/registration. Hardcoded for now:
-	// the local machine (always active, never power-cycled via relay) plus
-	// two remote edge nodes on relay channels 0 and 1, starting asleep.
-	reg.AddNode(cluster.Node{
-		ID:     "local",
-		Local:  true,
-		Status: cluster.NodeActive,
-	})
-	reg.AddNode(cluster.Node{
-		ID:             "edge-1",
-		Address:        "192.168.1.101:8000",
-		ManagerAddress: "192.168.1.101:8080",
-		Channel:        0,
-		Status:         cluster.NodeSleeping,
-	})
-	reg.AddNode(cluster.Node{
-		ID:             "edge-2",
-		Address:        "192.168.1.102:8000",
-		ManagerAddress: "192.168.1.102:8080",
-		Channel:        1,
-		Status:         cluster.NodeSleeping,
-	})
+	cfg := cluster.ControllerConfigFromEnv()
 
-	cluster.StartController(reg)
+	nodes, err := loadTopology()
+	if err != nil {
+		log.Fatalf("cluster topology: %v", err)
+	}
+
+	// The baseline runs the same cluster with power management off, so the
+	// two arms differ only in whether nodes are ever powered down.
+	if !cfg.Enabled {
+		nodes = cluster.AllActive(nodes)
+	}
+
+	for _, n := range nodes {
+		log.Printf("cluster: node %s (local=%v channel=%d) starts %s",
+			n.ID, n.Local, n.Channel, n.Status)
+		reg.AddNode(n)
+	}
+
+	// A no-op when power management is disabled; it logs which mode is in
+	// effect either way, so a run's logs record what was measured.
+	cluster.StartController(reg, cfg)
+
+	if !cfg.Enabled {
+		// Bring the cluster up in the background so the endpoints can start
+		// listening immediately; waking every node can take a while.
+		go reg.PrewarmAll()
+	}
 
 	// CoAP
 	if listenAddr, ok := listenAddrs["coap"]; ok {
@@ -122,7 +152,7 @@ func main() {
 	// HTTP
 	if listenAddr, ok := listenAddrs["http"]; ok {
 		log.Printf("starting http server on %s", listenAddr)
-		go tfhttp.Start(r, reg, listenAddr)
+		go tfhttp.Start(r, reg, cfg, listenAddr)
 	}
 	// GRPC
 	if listenAddr, ok := listenAddrs["grpc"]; ok {
@@ -237,7 +267,7 @@ func main() {
 	})
 
 	log.Printf("listening on %s", rproxyListenAddress)
-	err := http.ListenAndServe(rproxyListenAddress, server)
+	err = http.ListenAndServe(rproxyListenAddress, server)
 
 	if err != nil {
 		log.Printf("%s", err)

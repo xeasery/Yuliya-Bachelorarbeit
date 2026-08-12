@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Cluster topology for the rproxy. Point NODES_CONFIG at a copy of this.",
+    "Exactly one node must have \"local\": true -- that is the leader running",
+    "this process. It is never power-cycled, because it is what would have to",
+    "issue the power-off.",
+    "Each worker needs its own Tinkerforge relay channel; two workers sharing",
+    "a channel is rejected at startup.",
+    "address        = the worker's tinyFaaS HTTP endpoint (function calls)",
+    "manager_address = the worker's management API (health checks, deploys)"
+  ],
+  "nodes": [
+    {
+      "id": "local",
+      "local": true
+    },
+    {
+      "id": "edge-1",
+      "address": "192.168.1.101:8000",
+      "manager_address": "192.168.1.101:8080",
+      "channel": 0
+    },
+    {
+      "id": "edge-2",
+      "address": "192.168.1.102:8000",
+      "manager_address": "192.168.1.102:8080",
+      "channel": 1
+    }
+  ]
+}

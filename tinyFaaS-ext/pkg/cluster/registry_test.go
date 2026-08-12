@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,6 +38,22 @@ func (f *fakePowerController) onCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.onCalls)
+}
+
+func (f *fakePowerController) offCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.offCalls)
+}
+
+// failingPowerOffController powers on fine but cannot power off, standing in
+// for a stuck or unreachable relay channel.
+type failingPowerOffController struct {
+	fakePowerController
+}
+
+func (f *failingPowerOffController) PowerOff(channel int) error {
+	return fmt.Errorf("relay channel %d stuck", channel)
 }
 
 // fakeNode simulates a node's management API (/health, /upload, /delete)
@@ -172,7 +189,11 @@ func TestActivateNode_WakesAndDeploysFunctions(t *testing.T) {
 	}
 }
 
-func TestActivateNode_OneBadFunctionDoesNotKillNode(t *testing.T) {
+func TestActivateNode_FailedDeployDoesNotLeaveNodeServing(t *testing.T) {
+	// A node whose function failed to deploy has no such function, so
+	// routing to it produces 404s for every request. It must not end up
+	// active, and it must not be left powered on drawing energy it cannot
+	// do any work for.
 	node := newFakeNode()
 	defer node.close()
 	node.failUpload["broken"] = true
@@ -181,7 +202,76 @@ func TestActivateNode_OneBadFunctionDoesNotKillNode(t *testing.T) {
 	funcs.Set("broken", FunctionDef{Env: "python3", Threads: 1})
 	funcs.Set("fine", FunctionDef{Env: "python3", Threads: 1})
 
-	reg := NewRegistry(&fakePowerController{}, funcs)
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, funcs)
+	reg.AddNode(Node{
+		ID:             "edge-1",
+		ManagerAddress: node.addr(),
+		Channel:        0,
+		Status:         NodeSleeping,
+	})
+
+	err := reg.ActivateNode("edge-1")
+	if err == nil {
+		t.Fatal("expected ActivateNode to report the failed deploy")
+	}
+
+	n, _ := reg.GetNode("edge-1")
+	if n.Status != NodeSleeping {
+		t.Fatalf("expected node returned to sleeping, got %s", n.Status)
+	}
+
+	if got := ctrl.offCallCount(); got != 1 {
+		t.Fatalf("expected the node to be powered back off exactly once, got %d", got)
+	}
+
+	// The healthy function should still have been attempted: failures are
+	// per function, and the batch is not aborted at the first error.
+	uploads := node.uploadNames()
+	if len(uploads) != 1 || uploads[0] != "fine" {
+		t.Fatalf("expected the healthy function to still be attempted, got %v", uploads)
+	}
+}
+
+func TestActivateNode_FailedDeployAndFailedPowerOffMarksDead(t *testing.T) {
+	// If it cannot even be powered down it is both drawing power and
+	// unusable, so it has to be kept out of the scheduler permanently
+	// rather than retried on the next request.
+	node := newFakeNode()
+	defer node.close()
+	node.failUpload["broken"] = true
+
+	funcs := NewFunctionStore()
+	funcs.Set("broken", FunctionDef{Env: "python3", Threads: 1})
+
+	ctrl := &failingPowerOffController{}
+	reg := NewRegistry(ctrl, funcs)
+	reg.AddNode(Node{
+		ID:             "edge-1",
+		ManagerAddress: node.addr(),
+		Channel:        0,
+		Status:         NodeSleeping,
+	})
+
+	if err := reg.ActivateNode("edge-1"); err == nil {
+		t.Fatal("expected an error when deploy and power-off both fail")
+	}
+
+	n, _ := reg.GetNode("edge-1")
+	if n.Status != NodeDead {
+		t.Fatalf("expected node marked dead, got %s", n.Status)
+	}
+}
+
+func TestActivateNode_HealthyDeployStillActivates(t *testing.T) {
+	node := newFakeNode()
+	defer node.close()
+
+	funcs := NewFunctionStore()
+	funcs.Set("fine", FunctionDef{Env: "python3", Threads: 1})
+
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, funcs)
 	reg.AddNode(Node{
 		ID:             "edge-1",
 		ManagerAddress: node.addr(),
@@ -190,17 +280,15 @@ func TestActivateNode_OneBadFunctionDoesNotKillNode(t *testing.T) {
 	})
 
 	if err := reg.ActivateNode("edge-1"); err != nil {
-		t.Fatalf("ActivateNode should succeed despite one bad function, got: %v", err)
+		t.Fatalf("expected a clean wake to succeed, got %v", err)
 	}
 
 	n, _ := reg.GetNode("edge-1")
 	if n.Status != NodeActive {
-		t.Fatalf("expected node to still become active, got %s", n.Status)
+		t.Fatalf("expected node active, got %s", n.Status)
 	}
-
-	uploads := node.uploadNames()
-	if len(uploads) != 1 || uploads[0] != "fine" {
-		t.Fatalf("expected only the healthy function to be deployed, got %v", uploads)
+	if got := ctrl.offCallCount(); got != 0 {
+		t.Fatalf("a successful wake must not power the node off, got %d calls", got)
 	}
 }
 

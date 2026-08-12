@@ -1,10 +1,17 @@
 package cluster
 
-const LoadThreshold = 10
+// DefaultLoadThreshold is the in-flight request count above which a node
+// stops being a preferred target. Callers pass the configured value; this
+// is the fallback and what the tests pin against.
+const DefaultLoadThreshold = 10
 
 // PickNode selects the best node for a request from a snapshot of nodes.
 // It only decides — it does NOT mutate state or activate anything.
-func PickNode(nodes []Node) (Node, bool) {
+//
+// loadThreshold is passed in rather than read from a package global so the
+// decision stays a pure function of its inputs, which is what makes it
+// testable without standing up a cluster.
+func PickNode(nodes []Node, loadThreshold int) (Node, bool) {
 	var bestActive *Node
 	var bestIdleActive *Node
 	var bestSleeping *Node
@@ -19,7 +26,7 @@ func PickNode(nodes []Node) (Node, bool) {
 		}
 
 		// 1. Prefer active nodes under load threshold
-		if n.Status == NodeActive && n.Load < LoadThreshold {
+		if n.Status == NodeActive && n.Load < loadThreshold {
 			if bestActive == nil || n.Load < bestActive.Load {
 				bestActive = n
 			}

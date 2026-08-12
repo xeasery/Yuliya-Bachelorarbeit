@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -24,9 +25,28 @@ const activationSafetyTimeout = 5 * time.Minute
 var healthClient = &http.Client{Timeout: 2 * time.Second}
 
 // deployClient is used for /upload and /delete calls to a node's management
-// API. Building a function image can be slow, so this gets a much longer
-// timeout than the health check does.
-var deployClient = &http.Client{Timeout: 60 * time.Second}
+// API. Building a function image can be very slow -- the first build of a
+// function with compiled dependencies (numpy, Pillow) on a constrained edge
+// device runs for minutes, and only later wakes hit Docker's layer cache.
+// A timeout shorter than that turns every first deploy into a failed wake.
+// Override with DEPLOY_TIMEOUT (a Go duration, e.g. "10m").
+var deployClient = &http.Client{Timeout: deployTimeoutFromEnv()}
+
+func deployTimeoutFromEnv() time.Duration {
+	const fallback = 5 * time.Minute
+
+	v := os.Getenv("DEPLOY_TIMEOUT")
+	if v == "" {
+		return fallback
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		log.Printf("config: invalid DEPLOY_TIMEOUT=%q, using %s", v, fallback)
+		return fallback
+	}
+	return d
+}
 
 // healthCheckAttempts/healthCheckInterval bound how long waitForNodeReady
 // polls before giving up. Package-level vars (rather than constants) so
@@ -226,14 +246,77 @@ func (r *Registry) wakeNode(id string, channel int, managerAddress string) error
 		return fmt.Errorf("node %s failed readiness check", id)
 	}
 
-	// the node booted with no containers running, so every known function
-	// must be redeployed before it can be trusted to serve traffic. this is
-	// best-effort per function: one broken function shouldn't take an
-	// otherwise-healthy node out of the pool.
-	r.deployFunctions(id, managerAddress)
+	// The node booted with no containers running, so every known function
+	// must be redeployed before it can be trusted to serve traffic.
+	if failed := r.deployFunctions(id, managerAddress); failed > 0 {
+		// Marking the node active here would be worse than the wake having
+		// failed outright: the scheduler would route to a node that does
+		// not have the function and every one of those requests would 404.
+		// In an evaluation that shows up only in the power-aware arm, since
+		// the baseline never redeploys, and looks like power management
+		// causing errors rather than a failed deploy.
+		//
+		// Power it back off and return it to sleeping rather than marking
+		// it dead: the failure is usually transient (a slow first image
+		// build timing out), a sleeping node is retried on the next request
+		// that needs it, and leaving it powered on would burn energy for a
+		// node that cannot serve anything -- which this system exists to
+		// avoid, and which would skew the very numbers being measured.
+		log.Printf("node %s: %d function(s) failed to deploy, returning it to sleep", id, failed)
+
+		if err := r.ctrl.PowerOff(channel); err != nil {
+			// Cannot power it down, so it is drawing power and is not
+			// usable. Dead keeps the scheduler away from it.
+			log.Printf("node %s: failed to power off after bad deploy: %v", id, err)
+			r.SetStatus(id, NodeDead)
+			return fmt.Errorf("node %s: %d function(s) failed to deploy and it could not be powered off: %w", id, failed, err)
+		}
+
+		r.SetStatus(id, NodeSleeping)
+		return fmt.Errorf("node %s: %d function(s) failed to deploy", id, failed)
+	}
 
 	r.SetStatus(id, NodeActive)
 	return nil
+}
+
+// PrewarmAll brings every node up front, for the always-on baseline.
+//
+// Marking nodes active without actually powering them on would be worse
+// than useless: the scheduler would route to a node that is physically off
+// and every one of those requests would fail, quietly ruining the baseline
+// it was supposed to establish. Letting them wake on demand instead is not
+// a baseline either -- that is still hardware orchestration, only with a
+// different trigger -- so the cluster is brought up explicitly.
+//
+// Nodes are woken concurrently and failures are logged per node: one dead
+// node should not prevent the rest of the cluster from coming up.
+func (r *Registry) PrewarmAll() {
+	var wg sync.WaitGroup
+
+	for _, n := range r.ListNodes() {
+		if n.Local {
+			continue
+		}
+
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := r.ActivateNode(id); err != nil {
+				log.Printf("prewarm: node %s failed to come up: %v", id, err)
+			}
+		}(n.ID)
+	}
+
+	wg.Wait()
+
+	active := 0
+	for _, n := range r.ListNodes() {
+		if n.Status == NodeActive {
+			active++
+		}
+	}
+	log.Printf("prewarm: %d/%d nodes active", active, len(r.ListNodes()))
 }
 
 // DeactivateNode powers a node off via the Tinkerforge relay and marks it
@@ -280,10 +363,17 @@ func waitForNodeReady(managerAddr string) bool {
 // store to a node's management API, e.g. right after it wakes up with no
 // containers running. Functions are deployed concurrently -- sequentially
 // deploying N functions, each with its own slow-build timeout, would make
-// total wake time balloon with every function added -- and failures are
-// logged per function rather than aborting the whole batch.
-func (r *Registry) deployFunctions(nodeID, managerAddr string) {
-	var wg sync.WaitGroup
+// total wake time balloon with every function added.
+//
+// Returns the number of functions that failed. Individual failures do not
+// abort the batch, but the caller must not treat a node as ready when any
+// of them failed: it would serve 404s for a function it does not have.
+func (r *Registry) deployFunctions(nodeID, managerAddr string) int {
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		failed int
+	)
 
 	for name, def := range r.funcs.All() {
 		wg.Add(1)
@@ -291,6 +381,9 @@ func (r *Registry) deployFunctions(nodeID, managerAddr string) {
 			defer wg.Done()
 			if err := deployFunction(managerAddr, name, def); err != nil {
 				log.Printf("failed to deploy function %s to node %s: %v", name, nodeID, err)
+				mu.Lock()
+				failed++
+				mu.Unlock()
 				return
 			}
 			log.Printf("deployed function %s to node %s", name, nodeID)
@@ -298,6 +391,8 @@ func (r *Registry) deployFunctions(nodeID, managerAddr string) {
 	}
 
 	wg.Wait()
+
+	return failed
 }
 
 // BroadcastFunction pushes a single function to every node that is already

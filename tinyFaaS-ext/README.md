@@ -161,6 +161,60 @@ docker rmi $$(docker image ls -q --filter label=tinyFaaS)
 rm -rf ./tmp
 ```
 
+### Cluster Mode and Hardware Orchestration
+
+This fork can spread invocations across a cluster of nodes and power those
+nodes on and off via Tinkerforge relays according to demand.
+
+Describe the cluster in a JSON file (see
+[`deploy/nodes.example.json`](./deploy/nodes.example.json)) and point
+`NODES_CONFIG` at it. Without that variable, tinyFaaS runs single-node exactly
+as upstream does.
+
+```bash
+NODES_CONFIG=./deploy/nodes.json TINKERFORGE_UID=ABC ./rproxy ...
+```
+
+Exactly one node must be marked `"local": true` — the leader running the
+management service. It is never power-cycled, since it is what would have to
+issue the power-off. Each worker needs its own relay channel; a shared channel
+is rejected at startup rather than silently switching two nodes at once.
+
+#### Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `NODES_CONFIG` | unset | Path to the topology file. Unset = single-node. |
+| `POWER_AWARE` | `true` | `false` disables power management (see below). |
+| `NODE_IDLE_TIMEOUT` | `60s` | Idle time before a node is powered off. |
+| `CONTROLLER_INTERVAL` | `10s` | How often the controller re-evaluates. |
+| `MIN_ACTIVE_NODES` | `1` | Floor the controller will not scale below. |
+| `LOAD_THRESHOLD` | `10` | In-flight requests above which a node stops being preferred. |
+| `TINKERFORGE_HOST` / `TINKERFORGE_PORT` / `TINKERFORGE_UID` | `localhost` / `4223` / — | Relay connection. |
+
+#### Baseline vs. power-aware
+
+Evaluating hardware orchestration needs both arms of the comparison, differing
+only in whether nodes are ever powered down:
+
+```bash
+POWER_AWARE=true  NODES_CONFIG=... ./rproxy ...   # power-aware
+POWER_AWARE=false NODES_CONFIG=... ./rproxy ...   # always-on baseline
+```
+
+In baseline mode the controller never runs, every node starts active, and the
+cluster is powered up at startup. Nodes are brought up explicitly rather than
+left to wake on first request — waking on demand is still hardware
+orchestration, just with a different trigger, so it would not be a baseline.
+
+#### Observing the cluster
+
+`GET /nodes` on the management API returns each node's current status, load and
+last-used time. Responses also carry an `X-tinyFaaS-Node` header naming the node
+that served the request. Both exist so a benchmark can attribute invocations to
+nodes and record how many were awake over time — neither is otherwise
+observable from outside.
+
 ### Specifying Ports
 
 By default, tinyFaaS will use the following ports:
