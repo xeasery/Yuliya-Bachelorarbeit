@@ -197,8 +197,30 @@ NODES_CONFIG=./deploy/nodes.json TINKERFORGE_UID=ABC ./rproxy ...
 
 Exactly one node must be marked `"local": true` — the leader running the
 management service. It is never power-cycled, since it is what would have to
-issue the power-off. Each worker needs its own relay channel; a shared channel
-is rejected at startup rather than silently switching two nodes at once.
+issue the power-off.
+
+#### Relays and channels
+
+An Industrial Dual Relay Bricklet switches **two** nodes, so a cluster with
+more than two workers needs more than one bricklet. Each node names its relay
+with `relay_uid` and its channel *on that relay* (`0` or `1`) — `channel` is
+not a cluster-wide index:
+
+| Node | `relay_uid` | `channel` |
+| --- | --- | --- |
+| edge-1 | relay A | 0 |
+| edge-2 | relay A | 1 |
+| edge-3 | relay B | 0 |
+| edge-4 | relay B | 1 |
+
+`relay_uid` may be omitted on a single-relay cluster, where `TINKERFORGE_UID`
+is used instead. Find UIDs with Brick Viewer.
+
+Two configurations are rejected at startup rather than at first wake: two
+nodes sharing a relay *and* channel (one relay silently switching two nodes),
+and a channel outside `0..1` — which is what numbering four workers `0,1,2,3`
+on a single relay would produce, and which otherwise fails only mid-benchmark
+as a node marked dead for no visible reason.
 
 #### Configuration
 

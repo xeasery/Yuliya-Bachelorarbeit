@@ -16,14 +16,14 @@ type countingPower struct {
 	on  []int
 }
 
-func (c *countingPower) PowerOn(ch int) error {
+func (c *countingPower) PowerOn(relayUID string, ch int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.on = append(c.on, ch)
 	return nil
 }
 
-func (c *countingPower) PowerOff(ch int) error {
+func (c *countingPower) PowerOff(relayUID string, ch int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.off = append(c.off, ch)

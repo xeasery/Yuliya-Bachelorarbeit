@@ -154,7 +154,15 @@ func ValidateNodes(nodes []Node) error {
 	}
 
 	seenID := make(map[string]bool, len(nodes))
-	seenChannel := make(map[int]string)
+	// Keyed by relay *and* channel: with more than one bricklet, channel 0
+	// on relay A and channel 0 on relay B are different physical outlets,
+	// and treating the channel alone as unique would reject a valid
+	// multi-relay cluster.
+	type relayChannel struct {
+		uid     string
+		channel int
+	}
+	seenChannel := make(map[relayChannel]string)
 	locals := 0
 
 	for _, n := range nodes {
@@ -180,14 +188,25 @@ func ValidateNodes(nodes []Node) error {
 		if n.ManagerAddress == "" {
 			return fmt.Errorf("node %q has no manager_address", n.ID)
 		}
-		if n.Channel < 0 {
-			return fmt.Errorf("node %q has negative relay channel %d", n.ID, n.Channel)
+		// An Industrial Dual Relay Bricklet has two channels. Catching an
+		// out-of-range channel here matters because the failure otherwise
+		// only appears the first time that node is woken, mid-benchmark,
+		// as a node marked dead for no visible reason.
+		if n.Channel < 0 || n.Channel >= ChannelsPerRelay {
+			return fmt.Errorf(
+				"node %q has relay channel %d, but a relay has channels 0-%d; "+
+					"more than %d workers need additional relays, each named "+
+					"by relay_uid",
+				n.ID, n.Channel, ChannelsPerRelay-1, ChannelsPerRelay)
 		}
-		if other, dup := seenChannel[n.Channel]; dup {
-			return fmt.Errorf("nodes %q and %q share relay channel %d",
-				other, n.ID, n.Channel)
+
+		rc := relayChannel{uid: n.RelayUID, channel: n.Channel}
+		if other, dup := seenChannel[rc]; dup {
+			return fmt.Errorf(
+				"nodes %q and %q share relay %q channel %d",
+				other, n.ID, relayLabel(n.RelayUID), n.Channel)
 		}
-		seenChannel[n.Channel] = n.ID
+		seenChannel[rc] = n.ID
 	}
 
 	if locals != 1 {
@@ -195,6 +214,18 @@ func ValidateNodes(nodes []Node) error {
 	}
 
 	return nil
+}
+
+// ChannelsPerRelay mirrors tinkerforgefunc.ChannelsPerRelay. It is repeated
+// here rather than imported so pkg/cluster stays free of a dependency on the
+// hardware bindings, which is what lets the registry be tested without them.
+const ChannelsPerRelay = 2
+
+func relayLabel(uid string) string {
+	if uid == "" {
+		return "<default>"
+	}
+	return uid
 }
 
 // AllActive returns a copy of nodes with every node marked active, for the

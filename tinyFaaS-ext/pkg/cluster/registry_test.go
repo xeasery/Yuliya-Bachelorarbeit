@@ -15,22 +15,26 @@ import (
 // real Tinkerforge hardware.
 type fakePowerController struct {
 	mu       sync.Mutex
-	onCalls  []int
-	offCalls []int
-	onErr    error
+	onCalls   []int
+	offCalls  []int
+	onRelays  []string
+	offRelays []string
+	onErr     error
 }
 
-func (f *fakePowerController) PowerOn(channel int) error {
+func (f *fakePowerController) PowerOn(relayUID string, channel int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onCalls = append(f.onCalls, channel)
+	f.onRelays = append(f.onRelays, relayUID)
 	return f.onErr
 }
 
-func (f *fakePowerController) PowerOff(channel int) error {
+func (f *fakePowerController) PowerOff(relayUID string, channel int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.offCalls = append(f.offCalls, channel)
+	f.offRelays = append(f.offRelays, relayUID)
 	return nil
 }
 
@@ -52,8 +56,8 @@ type failingPowerOffController struct {
 	fakePowerController
 }
 
-func (f *failingPowerOffController) PowerOff(channel int) error {
-	return fmt.Errorf("relay channel %d stuck", channel)
+func (f *failingPowerOffController) PowerOff(relayUID string, channel int) error {
+	return fmt.Errorf("relay %s channel %d stuck", relayUID, channel)
 }
 
 // fakeNode simulates a node's management API (/health, /upload, /delete)

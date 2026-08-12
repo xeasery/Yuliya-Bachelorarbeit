@@ -60,8 +60,8 @@ var (
 // tested without real Tinkerforge hardware. *tinkerforgefunc.TinkerforgeController
 // already satisfies this interface as-is.
 type PowerController interface {
-	PowerOn(channel int) error
-	PowerOff(channel int) error
+	PowerOn(relayUID string, channel int) error
+	PowerOff(relayUID string, channel int) error
 }
 
 // activation tracks a single in-flight wake attempt for a node. done is
@@ -208,13 +208,14 @@ func (r *Registry) ActivateNode(id string) error {
 	r.activations[id] = act
 
 	n.Status = NodeWaking
+	relayUID := n.RelayUID
 	channel := n.Channel
 	managerAddress := n.ManagerAddress
 	r.mu.Unlock()
 
 	log.Printf("activating node %s", id)
 
-	err := r.wakeNode(id, channel, managerAddress)
+	err := r.wakeNode(id, relayUID, channel, managerAddress)
 
 	r.mu.Lock()
 	delete(r.activations, id)
@@ -233,9 +234,9 @@ func (r *Registry) ActivateNode(id string) error {
 // wakeNode runs the actual wake sequence for a node: power on, wait for
 // readiness, then redeploy known functions. It sets the node's final status
 // (Active or Dead) itself.
-func (r *Registry) wakeNode(id string, channel int, managerAddress string) error {
+func (r *Registry) wakeNode(id, relayUID string, channel int, managerAddress string) error {
 	// hardware call outside any lock
-	if err := r.ctrl.PowerOn(channel); err != nil {
+	if err := r.ctrl.PowerOn(relayUID, channel); err != nil {
 		r.SetStatus(id, NodeDead)
 		return fmt.Errorf("failed to power on node %s: %w", id, err)
 	}
@@ -264,7 +265,7 @@ func (r *Registry) wakeNode(id string, channel int, managerAddress string) error
 		// avoid, and which would skew the very numbers being measured.
 		log.Printf("node %s: %d function(s) failed to deploy, returning it to sleep", id, failed)
 
-		if err := r.ctrl.PowerOff(channel); err != nil {
+		if err := r.ctrl.PowerOff(relayUID, channel); err != nil {
 			// Cannot power it down, so it is drawing power and is not
 			// usable. Dead keeps the scheduler away from it.
 			log.Printf("node %s: failed to power off after bad deploy: %v", id, err)
@@ -332,10 +333,11 @@ func (r *Registry) DeactivateNode(id string) error {
 		r.mu.RUnlock()
 		return fmt.Errorf("refusing to power-cycle local node %s", id)
 	}
+	relayUID := n.RelayUID
 	channel := n.Channel
 	r.mu.RUnlock()
 
-	if err := r.ctrl.PowerOff(channel); err != nil {
+	if err := r.ctrl.PowerOff(relayUID, channel); err != nil {
 		return fmt.Errorf("failed to power off node %s: %w", id, err)
 	}
 
