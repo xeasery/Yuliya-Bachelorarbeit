@@ -20,10 +20,16 @@ The work spans three repositories:
 
 ## Getting started
 
-- **[SETUP.md](./SETUP.md)** — bringing up the physical cluster: leader, four
-  workers, relays, energy logger, and the checks at each stage.
-- **[tinyFaaS-ext/README.md](./tinyFaaS-ext/README.md)** — cluster mode,
-  configuration variables, and the baseline switch.
+Read in this order:
+
+1. **[PI_BRINGUP.md](./PI_BRINGUP.md)** — from bare Raspberry Pi OS to
+   machines you can SSH into: addressing, clocks, Docker, accounts, keys,
+   Tinkerforge.
+2. **[SETUP.md](./SETUP.md)** — from there to a working cluster: the systemd
+   unit, read-only root, `nodes.json`, the function image, and a proven
+   wake/sleep cycle.
+3. **[tinyFaaS-ext/README.md](./tinyFaaS-ext/README.md)** — cluster mode,
+   configuration variables, and the baseline switch.
 
 ## The experiment
 
