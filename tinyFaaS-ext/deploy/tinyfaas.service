@@ -39,13 +39,30 @@ After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 
+# Never give up restarting. systemd's default is to stop trying after 5
+# starts in 10s and leave the unit failed, which on an unattended worker
+# means it stays dead until someone logs in -- and the only symptom is a
+# node the leader quietly marks dead mid-experiment.
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=tinyfaas
 WorkingDirectory=/opt/tinyfaas
 ExecStart=/opt/tinyfaas/tinyfaas-mgmt
-Restart=on-failure
+
+# always, not on-failure: the management service exits 0 when it receives a
+# signal, and on-failure does not restart a clean exit. A worker that took a
+# stray SIGTERM would stop serving permanently while looking healthy to
+# systemd.
+Restart=always
 RestartSec=5
+
+# Docker may still be settling after a power-on even though systemd
+# considers it started, so the first attempts can fail. That is expected and
+# recovers on its own; these just stop it thrashing while it waits.
+TimeoutStartSec=120
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

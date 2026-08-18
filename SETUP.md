@@ -98,6 +98,26 @@ docker info | grep "Docker Root Dir"     # /var/lib/docker, on the new filesyste
 refuses to finish booting, and a node that will not boot unattended breaks
 the whole design.
 
+But `nofail` alone creates a subtler problem. If the disk is slow to appear,
+boot carries on *without* it, Docker starts against the empty overlay
+directory, and the cached `edge` image is simply not there — so the node
+re-downloads it on every wake and nobody notices, because everything still
+works, only slower. Make Docker wait for the mount instead:
+
+```bash
+sudo systemctl edit docker.service
+```
+```ini
+[Unit]
+RequiresMountsFor=/var/lib/docker
+```
+
+Now a missing disk stops Docker, which stops tinyFaaS, which means the node
+never answers `/health` and the leader reports it dead. That is a loud
+failure you will notice, rather than a quiet one that inflates every wake in
+your results. The machine still boots and is reachable over SSH, so you can
+go and look.
+
 ### 0.2 Keep the logs
 
 journald writes to `/var/log`, which is inside the overlay — so a worker's
@@ -183,17 +203,33 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now tinyfaas
 ```
 
-**Check — and do this with the power, not with `reboot`:**
+`systemctl enable` is what makes this survive a power cut: it starts tinyFaaS
+on every boot, and the unit restarts it if it dies. The unit is written for
+unattended operation — it restarts on *any* exit, not just failures, because
+the management service exits cleanly when signalled, and it never stops
+retrying, because systemd would otherwise give up after a few rapid attempts
+and leave the node dead until someone logged in.
+
+**Check — with the power, not with `reboot`:**
 
 ```bash
-# from the leader
+systemctl is-enabled tinyfaas     # must say: enabled
 curl -f http://<worker-ip>:8080/health && echo OK
 ```
 
 Now physically cut and restore power to that worker, wait, and run the same
-curl again without touching the machine. If it does not come back on its own,
-nothing else in this setup will work — the entire design assumes a node
-recovers unattended from a power cut.
+curl again without touching the machine.
+
+```bash
+# after it comes back, from the worker
+systemctl is-active tinyfaas      # active
+docker images                     # the edge image is still cached
+```
+
+If it does not come back on its own, nothing else in this setup will work —
+the entire design assumes a node recovers unattended from a power cut. Do
+this once now with an unconfigured worker, and again at the end once the
+overlay is enabled, since the overlay changes what survives.
 
 ## 3. The leader
 
@@ -397,3 +433,5 @@ bars, and wake timing in particular varies a lot.
 | `edge` image gone after a power cut, wakes suddenly slow | `/var/lib/docker` is inside the overlay. It needs persistent storage (step 0.1). |
 | A worker hangs at boot | Persistent disk missing from `/etc/fstab` without `nofail`. |
 | Config change vanished after reboot | The overlay is active; see step 0.4. |
+| Worker never comes back after a power cut | `systemctl is-enabled tinyfaas` — the unit was installed but not enabled. |
+| Worker stopped serving and stayed down | Old unit with `Restart=on-failure`: the service exits 0 on a signal, so it was never restarted. Reinstall the unit from `deploy/`. |
