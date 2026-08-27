@@ -22,7 +22,7 @@ once rather than four times over.
    your Mac ─ ssh ─▶│ LEADER                               │
    (k6 client)      │  tinyFaaS mgmt :8080                 │
                     │  rproxy        :8000 fn  :8081 /nodes│
-                    │  brickd :4223  ── relay A, relay B   │
+                    │  brickd :4223 (if relays are here)   │
                     └───┬──────────────────────────┬───────┘
                         │ relay A          relay B │
                    ┌────┴────┐                ┌────┴────┐
@@ -36,6 +36,8 @@ once rather than four times over.
                        ┌───────────▼────────────┐
                        │ energy host (ThinkPad) │
                        │  brickd + energy-logger│
+                       │  (relays may live here │
+                       │   instead — see Part 3)│
                        └────────────────────────┘
 ```
 
@@ -322,23 +324,60 @@ the new filesystem.
 
 ## Part 3 — Tinkerforge
 
-### 3.1 The relays (leader)
+Tinkerforge devices are reached through `brickd`, which talks to whatever is
+plugged into *that* machine's USB. So the first thing to establish is **which
+machine each Master Brick is physically connected to** — it decides how the
+leader is configured.
+
+Open Brick Viewer and connect to each candidate host in turn (`localhost:4223`
+on the machine itself, or `<ip>:4223` remotely). Whichever host lists the
+Industrial Dual Relay Bricklets is the relay host.
+
+Two layouts are supported:
+
+| Layout | Relay host | Leader config |
+| --- | --- | --- |
+| **A** — relays on the leader | leader | default (`localhost`) |
+| **B** — relays on the energy host | ThinkPad | `TINKERFORGE_HOST=<thinkpad-ip>` |
+
+### 3.1 Install brickd on each host that has hardware
 
 ```bash
 sudo apt install -y brickd
 sudo systemctl enable --now brickd
 ```
 
-Connect the Master Brick by USB and attach the two Industrial Dual Relay
-Bricklets. Read their UIDs with Brick Viewer — run it on your Mac and connect
-to the leader's IP on port 4223.
-
 **Check:** `sudo ss -lntp | grep 4223`
 
-### 3.2 The energy bricklets (energy host)
+### 3.2 Layout B only: let the leader reach brickd over the network
+
+If the relays are on the ThinkPad, the leader talks to brickd across the
+network, and brickd must be listening on more than loopback. In
+`/etc/brickd.conf`:
+
+```
+listen.address = 0.0.0.0
+```
+
+```bash
+sudo systemctl restart brickd
+```
+
+**Check** from the leader:
+
+```bash
+nc -z <thinkpad-ip> 4223 && echo reachable
+```
+
+Layout B couples the two machines: if the ThinkPad sleeps, disconnects, or
+its address changes mid-run, the leader can no longer power anything on or
+off, and the experiment quietly becomes an always-on baseline. Part 10's
+suspend settings are not optional in that case.
+
+### 3.3 The energy bricklets
 
 The five Voltage/Current Bricklets connect to whichever machine runs the
-energy logger. Install `brickd` there too.
+energy logger — the ThinkPad.
 
 **Map bricklets to nodes before anything else.** Brick Viewer gives you UIDs
 but not what each is wired to. Power on **one** node at a time and watch which
@@ -348,7 +387,7 @@ it is the one error here that is undetectable after the fact.
 
 Fill in the VC Bricklet column of your table from 1.3.
 
-### 3.3 ⚠ Wiring the relays
+### 3.4 ⚠ Wiring the relays
 
 The relays switch each worker's power supply on and off. **How you wire this
 is an electrical safety question, not a software one.**
@@ -459,6 +498,8 @@ sudo systemctl edit tinyfaas
 Environment=NODES_CONFIG=/opt/tinyfaas/nodes.json
 Environment=TINKERFORGE_UID=<relay A UID>
 Environment=POWER_AWARE=true
+# Layout B only — relays on the energy host rather than the leader:
+# Environment=TINKERFORGE_HOST=<thinkpad-ip>
 ```
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart tinyfaas
@@ -700,6 +741,8 @@ bars, and wake timing in particular varies a lot.
 | Pi unreachable after a reboot | DHCP gave it a different address — see 1.3. |
 | `cannot execute binary file` | Wrong architecture; check `uname -m` and rebuild. |
 | Node marked `dead` right after power-on | Worker not answering `/health`: running upstream tinyFaaS, unit not enabled, or wrong `manager_address`. |
+| `open relay <uid>: ...` on the leader | Relays are on another host: set `TINKERFORGE_HOST`, and check brickd's `listen.address` (3.2). |
+| Nodes never power down, no errors | Leader cannot reach brickd — with layout B, check the ThinkPad is awake and reachable. |
 | `invalid relay channel 2` | Four workers numbered 0..3 on one relay. Channels are per-relay; use `relay_uid`. |
 | Node wakes, then immediately sleeps again | Function deploy failed — almost always the uncached image build (Part 7). |
 | No node-state timeline in results | Sampler could not reach `/nodes`. It is on **8081**, not 8080. |
