@@ -182,13 +182,33 @@ after a reboot.
 
 Write your table down now — you need it for `nodes.json`:
 
-| Role | Hostname | IP | Relay | Channel | VC Bricklet |
-| --- | --- | --- | --- | --- | --- |
-| leader | leader | | — | — | |
-| worker | edge-1 | | A | 0 | |
-| worker | edge-2 | | A | 1 | |
-| worker | edge-3 | | B | 0 | |
-| worker | edge-4 | | B | 1 | |
+| Role | Hostname | IP | MAC | Relay | Channel | VC Bricklet |
+| --- | --- | --- | --- | --- | --- | --- |
+| leader | leader | 192.168.0.199 | `2c:cf:67:e2:b3:95` | — | — | |
+| worker | edge-1 | 192.168.0.204 | `d8:3a:dd:25:51:46` | A | 0 | |
+| worker | edge-2 | 192.168.0.207 | `d8:3a:dd:25:51:79` | A | 1 | |
+| worker | edge-3 | 192.168.0.133 | `d8:3a:dd:25:45:73` | B | 0 | |
+| worker | edge-4 | 192.168.0.115 | `2c:cf:67:0e:94:cc` | B | 1 | |
+
+The worker-to-hostname assignment above is arbitrary until you set the
+hostnames — all five currently report `raspberrypi`, so pick an order, set it,
+and label the physical machines to match. Which worker is which only has to be
+*consistent*, not any particular way round.
+
+Fill in the relay and bricklet columns as you work through Part 3.
+
+**Check the models are identical:**
+
+```bash
+cat /proc/device-tree/model
+```
+
+Two MAC prefixes appear above (`d8:3a:dd` and `2c:cf:67`), which can mean two
+different Pi generations. A mixed cluster is not fatal, but it is something to
+know before you measure: models differ in idle power and in how fast they run
+the function, while the scheduler treats nodes as interchangeable. If they do
+differ, say so in the thesis and keep an eye on the per-node power figures,
+which will not be comparable across models.
 
 ### 1.4 Clocks — do not skip this
 
@@ -445,11 +465,13 @@ the entire design assumes a node recovers unattended from a power cut.
 
 ## Part 6 — Configure the leader
 
-```bash
-cp tinyFaaS-ext/deploy/nodes.example.json /opt/tinyfaas/nodes.json
-```
+`deploy/nodes.json` already carries the cluster's real addresses; only the two
+relay UIDs are placeholders.
 
-Fill in the workers' IPs and the two relay UIDs. `channel` is the channel **on
+```bash
+sudo cp tinyFaaS-ext/deploy/nodes.json /opt/tinyfaas/nodes.json
+sudo nano /opt/tinyfaas/nodes.json     # replace REPLACE_WITH_RELAY_*_UID
+``` `channel` is the channel **on
 that relay** (0 or 1), not a cluster-wide index:
 
 | Node | `relay_uid` | `channel` |

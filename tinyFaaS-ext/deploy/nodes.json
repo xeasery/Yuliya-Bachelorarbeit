@@ -1,57 +1,46 @@
 {
   "_comment": [
-    "DRAFT - one of these five is the leader and must be removed from this",
-    "list and replaced with {\"id\": \"leader\", \"local\": true} instead.",
-    "Once you know which physical Pi is which, rename ids to edge-1..edge-4",
-    "in the order they're wired to the relay bricklets (see PI_BRINGUP.md",
-    "Phase 2 table), and fill in relay_uid/channel once the relay bricklet",
-    "question is resolved -- current Brick Viewer scan showed 5x",
-    "Voltage/Current Bricklet 2.0 (UIDs 26vf, 26mi, 26iw, 26vg, 26gZ) under",
-    "two Master Bricks, but no Industrial Dual Relay Bricklets. If power-",
-    "switching is still done via relay, wire/scan those and fill relay_uid",
-    "below. If not, drop relay_uid/channel from every entry -- POWER_AWARE",
-    "hardware orchestration needs some switching mechanism to mean anything."
+    "The real cluster topology. Copy to /opt/tinyfaas/nodes.json on the",
+    "leader and point NODES_CONFIG at it.",
+    "",
+    "TODO before first run: replace the two relay_uid placeholders with the",
+    "UIDs read from Brick Viewer against the leader (SETUP.md 3.2).",
+    "",
+    "channel is the channel ON THAT RELAY (0 or 1), not a cluster-wide index.",
+    "The leader is never power-cycled and so has no relay or channel."
   ],
   "nodes": [
     {
-      "id": "pi-204",
+      "id": "leader",
+      "local": true
+    },
+    {
+      "id": "edge-1",
       "address": "192.168.0.204:8000",
       "manager_address": "192.168.0.204:8080",
-      "relay_uid": "TBD",
-      "channel": null,
-      "_mac": "d8:3a:dd:25:51:46"
+      "relay_uid": "REPLACE_WITH_RELAY_A_UID",
+      "channel": 0
     },
     {
-      "id": "pi-115",
-      "address": "192.168.0.115:8000",
-      "manager_address": "192.168.0.115:8080",
-      "relay_uid": "TBD",
-      "channel": null,
-      "_mac": "2c:cf:67:0e:94:cC"
-    },
-    {
-      "id": "pi-207",
+      "id": "edge-2",
       "address": "192.168.0.207:8000",
       "manager_address": "192.168.0.207:8080",
-      "relay_uid": "TBD",
-      "channel": null,
-      "_mac": "d8:3a:dd:25:51:79"
+      "relay_uid": "REPLACE_WITH_RELAY_A_UID",
+      "channel": 1
     },
     {
-      "id": "pi-133",
+      "id": "edge-3",
       "address": "192.168.0.133:8000",
       "manager_address": "192.168.0.133:8080",
-      "relay_uid": "TBD",
-      "channel": null,
-      "_mac": "d8:3a:dd:25:45:73"
+      "relay_uid": "REPLACE_WITH_RELAY_B_UID",
+      "channel": 0
     },
     {
-      "id": "pi-199",
-      "address": "192.168.0.199:8000",
-      "manager_address": "192.168.0.199:8080",
-      "relay_uid": "TBD",
-      "channel": null,
-      "_mac": "2c:cf:67:e2:b3:95"
+      "id": "edge-4",
+      "address": "192.168.0.115:8000",
+      "manager_address": "192.168.0.115:8080",
+      "relay_uid": "REPLACE_WITH_RELAY_B_UID",
+      "channel": 1
     }
   ]
 }
