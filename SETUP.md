@@ -465,12 +465,26 @@ the entire design assumes a node recovers unattended from a power cut.
 
 ## Part 6 — Configure the leader
 
-`deploy/nodes.json` already carries the cluster's real addresses; only the two
-relay UIDs are placeholders.
+`deploy/nodes.json` already carries the cluster's real addresses and relay
+UIDs (A = `2brr`, B = `2bro`), so it can be copied as-is:
 
 ```bash
 sudo cp tinyFaaS-ext/deploy/nodes.json /opt/tinyfaas/nodes.json
-sudo nano /opt/tinyfaas/nodes.json     # replace REPLACE_WITH_RELAY_*_UID
+```
+
+**Verify which relay is which before the first wake.** `2brr` and `2bro`
+differ only in the last character, and the assignment of A/B to the physical
+relays has to match how the workers are actually plugged in. A swap does fail
+visibly rather than silently — the leader powers the wrong node, polls the
+intended one, gets no answer and marks it dead — but "node marked dead" is a
+slow thing to debug if you do not already suspect the wiring.
+
+The direct check, one relay channel at a time:
+
+```bash
+# on the leader, with all workers powered off
+# toggle a single channel in Brick Viewer and see which Pi comes up
+ping 192.168.0.204
 ``` `channel` is the channel **on
 that relay** (0 or 1), not a cluster-wide index:
 
