@@ -381,18 +381,40 @@ sleeping again.
 
 ## 6. Energy logger
 
-On the machine with the Voltage/Current Bricklet — measuring the **shared
-supply**, so the figure is whole-cluster power:
+One Voltage/Current Bricklet per node, so a powered-down node reads ~0 W
+directly rather than being inferred from a fall in the total.
 
 ```bash
-git clone <your energy-measurements repo> ~/energy-measurements
+git clone https://github.com/xeasery/energy-measurements ~/energy-measurements
 cd ~/energy-measurements && make build
-ENERGY_UID=<vc bricklet UID> sudo ./energy-logger
 ```
 
-It prints `ENERGY_FILE=...` and starts writing. Confirm the CSV is actually
-growing — a wrong UID produces a file containing only a header, which would
-score an entire run as zero energy.
+**First, map bricklets to nodes.** Brick Viewer gives you UIDs but not what
+each is wired to. Power on one node at a time and watch which bricklet's
+current rises; the rest sit near zero. Get this right before running
+anything — a swapped pair attributes each node's energy to the other, and
+nothing in the output would look wrong.
+
+```bash
+ENERGY_NODES="leader=26vf,edge-1=26mi,edge-2=26iw,edge-3=26vg,edge-4=26gZ" \
+  sudo ./energy-logger
+```
+
+It prints `ENERGY_FILE=...` and logs one line per node at startup. Confirm
+every node appears in the CSV — a bricklet that never reports contributes
+nothing to the total, which looks exactly like a node that was deliberately
+powered off:
+
+```bash
+tail -5 log/energy_*.csv
+cut -d, -f2 log/energy_*.csv | sort -u        # every node should be listed
+```
+
+A node sitting at single-digit milliwatts is powered off; an idle Pi draws
+around 3 W.
+
+For runs longer than about an hour, raise `ENERGY_PERIOD_MS` — the period is
+per bricklet, so five nodes at the 10 ms default is 500 rows/second.
 
 ## 7. Run the experiment
 
@@ -403,6 +425,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 
 export ORCH_USER=<user> ORCH_HOST=<leader-ip> ORCH_SSH_PORT=22
 export REMOTE_ENERGY_HOST=<energy host> REMOTE_ENERGY_USER=<user>
+export ENERGY_NODES="leader=26vf,edge-1=26mi,edge-2=26iw,edge-3=26vg,edge-4=26gZ"
 
 # baseline: leader started with POWER_AWARE=false
 EXPERIMENT_NAME=low_load_baseline    scripts/run_low_load.sh
@@ -428,7 +451,9 @@ bars, and wake timing in particular varies a lot.
 | Node wakes, then immediately sleeps again | Function deploy failed — almost always the uncached image build (step 4). |
 | Requests 404 after a wake | Should no longer happen; a failed deploy now returns the node to sleep. If it does, the function was deleted between wakes. |
 | No node-state timeline in results | Sampler could not reach `/nodes`. It is on **8081**, not 8080. |
-| Energy CSV has only a header | Wrong `ENERGY_UID`, or the bricklet is not connected. |
+| Energy CSV has only a header | Wrong UID, or no bricklet connected. |
+| One node missing from the energy CSV | Its bricklet detached or its UID is wrong. It then contributes nothing to the total, which mimics a powered-off node — check the logger's warnings. |
+| A node's energy looks like another's | Bricklet-to-node mapping swapped; re-derive it one node at a time. |
 | Workers stop booting after some days | SD card corruption from hard power cuts — see step 0. |
 | `edge` image gone after a power cut, wakes suddenly slow | `/var/lib/docker` is inside the overlay. It needs persistent storage (step 0.1). |
 | A worker hangs at boot | Persistent disk missing from `/etc/fstab` without `nofail`. |
