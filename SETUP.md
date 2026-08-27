@@ -3,6 +3,12 @@
 Bringing up the 5-machine cluster for the hardware-orchestration experiments:
 one leader and four workers, whose power is switched by Tinkerforge relays.
 
+**Start with [PI_BRINGUP.md](./PI_BRINGUP.md).** This guide assumes each Pi
+already has a fixed address, a synchronised clock, Docker, the `tinyfaas`
+user, key-based SSH from your laptop, and the binary at
+`/opt/tinyfaas/tinyfaas-mgmt`. If any of that is missing, go there first —
+the two guides do not repeat each other's steps.
+
 Work through this in order. Each step ends with a check — do not move on
 until it passes, because most failures here are silent later rather than loud
 now.
@@ -19,16 +25,25 @@ to it at the right moment.
    your Mac ─ ssh ─▶│ LEADER                               │
    (k6 client)      │  tinyFaaS mgmt :8080                 │
                     │  rproxy        :8000 fn  :8081 /nodes│
-                    │  brickd :4223                        │
+                    │  brickd :4223  ── relay A, relay B   │
                     └───┬──────────────────────────┬───────┘
                         │ relay A          relay B │
                    ┌────┴────┐                ┌────┴────┐
                  ch0│      ch1│             ch0│     ch1│
               ┌─────▼─┐  ┌────▼──┐       ┌─────▼─┐ ┌────▼──┐
               │edge-1 │  │edge-2 │       │edge-3 │ │edge-4 │
-              └───────┘  └───────┘       └───────┘ └───────┘
-                     Voltage/Current Bricklet on the shared supply
+              └───┬───┘  └───┬───┘       └───┬───┘ └───┬───┘
+                  │ one Voltage/Current Bricklet per node
+                  └──────────┴───────────────┴─────────┘
+                                   │
+                       ┌───────────▼────────────┐
+                       │ energy host (ThinkPad) │
+                       │  brickd + energy-logger│
+                       └────────────────────────┘
 ```
+
+The leader also has its own Voltage/Current Bricklet — five in total, so the
+cluster figure is the sum across all five rather than a single reading.
 
 Ports (tinyFaaS defaults):
 
@@ -164,18 +179,15 @@ sudo raspi-config nonint disable_overlayfs && sudo reboot
 sudo raspi-config nonint enable_overlayfs && sudo reboot
 ```
 
-## 1. Build once
+## 1. One binary, two roles
 
-Every machine runs the **same binary from this repository**. Workers are not
-stock tinyFaaS nodes: the leader decides a worker is ready by polling
-`/health`, and that endpoint does not exist upstream. A worker running
-upstream tinyFaaS powers on, never answers, fails readiness, and is marked
-dead — so every wake fails.
+[PI_BRINGUP.md Phase 8](./PI_BRINGUP.md) already built and distributed the
+binary. Worth restating why it is the same one everywhere:
 
-```bash
-cd tinyFaaS-ext
-make build            # produces tinyfaas-linux-arm64 (match your Pi's arch)
-```
+Every machine runs the build **from this repository**, not upstream tinyFaaS.
+The leader decides a worker is ready by polling `/health`, and that endpoint
+does not exist upstream — a worker running stock tinyFaaS powers on, never
+answers, fails readiness and is marked dead, so every wake fails.
 
 Role is decided entirely by environment, not by the binary:
 
@@ -188,16 +200,11 @@ Role is decided entirely by environment, not by the binary:
 
 Workers need no configuration, no `nodes.json`, and no brickd.
 
+By this point [PI_BRINGUP.md](./PI_BRINGUP.md) has already installed Docker,
+created the `tinyfaas` user and placed the binary at
+`/opt/tinyfaas/tinyfaas-mgmt`. All that is left is to make it start on boot:
+
 ```bash
-# Docker, with the service user able to reach the socket
-sudo apt install -y docker.io
-sudo useradd -r -m -d /opt/tinyfaas tinyfaas || true
-sudo usermod -aG docker tinyfaas
-
-sudo mkdir -p /opt/tinyfaas
-sudo cp tinyfaas-linux-arm64 /opt/tinyfaas/tinyfaas-mgmt
-sudo chown -R tinyfaas:tinyfaas /opt/tinyfaas
-
 sudo cp tinyFaaS-ext/deploy/tinyfaas.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now tinyfaas
