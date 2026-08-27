@@ -20,16 +20,11 @@ The work spans three repositories:
 
 ## Getting started
 
-Read in this order:
-
-1. **[PI_BRINGUP.md](./PI_BRINGUP.md)** — from bare Raspberry Pi OS to
-   machines you can SSH into: addressing, clocks, Docker, accounts, keys,
-   Tinkerforge.
-2. **[SETUP.md](./SETUP.md)** — from there to a working cluster: the systemd
-   unit, read-only root, `nodes.json`, the function image, and a proven
-   wake/sleep cycle.
-3. **[tinyFaaS-ext/README.md](./tinyFaaS-ext/README.md)** — cluster mode,
-   configuration variables, and the baseline switch.
+- **[SETUP.md](./SETUP.md)** — the whole build, top to bottom: from freshly
+  imaged SD cards through addressing, clocks, Docker, relays, per-node energy
+  measurement, and a proven wake/sleep cycle, to running the experiment.
+- **[tinyFaaS-ext/README.md](./tinyFaaS-ext/README.md)** — cluster mode,
+  configuration variables, and the baseline switch.
 
 ## The experiment
 
