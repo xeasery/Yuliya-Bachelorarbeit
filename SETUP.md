@@ -484,20 +484,40 @@ UIDs (A = `2brr`, B = `2bro`), so it can be copied as-is:
 sudo cp tinyFaaS-ext/deploy/nodes.json /opt/tinyfaas/nodes.json
 ```
 
-**Verify which relay is which before the first wake.** `2brr` and `2bro`
-differ only in the last character, and the assignment of A/B to the physical
-relays has to match how the workers are actually plugged in. A swap does fail
-visibly rather than silently — the leader powers the wrong node, polls the
-intended one, gets no answer and marks it dead — but "node marked dead" is a
-slow thing to debug if you do not already suspect the wiring.
+### Verify the wiring before the first experiment
 
-The direct check, one relay channel at a time:
+Three mappings have to agree, and none can be checked once a run is under way:
+relay+channel → machine, IP → machine, and bricklet → machine. A relay mistake
+eventually shows up as a node marked dead, which points at the wrong thing. A
+bricklet mistake never shows up at all — each node's energy is attributed to
+another and every number still looks plausible.
+
+`verify-wiring` powers each worker on by itself and checks all three at once:
 
 ```bash
-# on the leader, with all workers powered off
-# toggle a single channel in Brick Viewer and see which Pi comes up
-ping 192.168.0.204
-``` `channel` is the channel **on
+# on the leader
+cd tinyFaaS-ext
+NODES_CONFIG=deploy/nodes.json \
+ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
+ENERGY_ADDR=<thinkpad-ip>:4223 \
+  make verify-wiring
+```
+
+```
+node       address  bricklet   verdict
+──────────────────────────────────────────────────────────
+edge-1     ✓        ✓          ok
+edge-2     ✓        ✗          bricklet mismatch: this machine is
+                               measured by the one mapped to "edge-4"
+```
+
+It leaves every worker powered off. Reading the energy bricklets needs
+`listen.address = 0.0.0.0` in the ThinkPad's `/etc/brickd.conf`; without it
+the tool still checks relays and addresses and says so.
+
+The leader's own bricklet (`26gZ`) cannot be checked this way — it is never
+powered off. It is verifiable by elimination: it is the one series that never
+rises or falls as workers come and go. `channel` is the channel **on
 that relay** (0 or 1), not a cluster-wide index:
 
 | Node | `relay_uid` | `channel` |

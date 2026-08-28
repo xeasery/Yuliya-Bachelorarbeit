@@ -19,6 +19,13 @@ build: tinyfaas-${OS}-${ARCH}
 start: tinyfaas-${OS}-${ARCH}
 	./$<
 
+# Hardware wiring check: powers each worker on by itself and confirms the
+# expected address answers and the expected bricklet is the one drawing
+# current. Run it on the leader before the first experiment.
+.PHONY: verify-wiring
+verify-wiring:
+	go run ./cmd/verify-wiring
+
 .PHONY: test
 test: build ${TEST_DIR}/test_all.py pkg/grpc/tinyfaas/tinyfaas_pb2.py pkg/grpc/tinyfaas/tinyfaas_pb2.pyi pkg/grpc/tinyfaas/tinyfaas_pb2_grpc.py
 	@python3 ${TEST_DIR}/test_all.py
