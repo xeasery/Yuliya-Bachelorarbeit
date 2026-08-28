@@ -391,7 +391,50 @@ func (ms *ManagementService) Stop() error {
 	return ms.backend.Stop()
 }
 
+// functionIdleTimeout is how long a function may go unused before this node
+// tears it down -- tinyFaaS's own function-level scale-to-zero.
+//
+// In a cluster that already scales by powering whole nodes down, the two
+// mechanisms fight: the leader considers a node active and keeps routing to
+// it, while the node quietly deletes the function underneath, so requests
+// arrive at a node that no longer has anything to serve them. With the
+// leader's idle timeout at 60s and this at 30s, there is a guaranteed window
+// where that happens.
+//
+// FUNCTION_IDLE_TIMEOUT=0 disables the reaper, which is what a cluster wants:
+// node power management is the scale-to-zero. Any other duration overrides
+// the default. Left alone, behaviour is unchanged from upstream.
+func functionIdleTimeout() time.Duration {
+	const fallback = 30 * time.Second
+
+	v := os.Getenv("FUNCTION_IDLE_TIMEOUT")
+	if v == "" {
+		return fallback
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		// Bare "0" is not a valid duration string but is the obvious way to
+		// ask for "off", so accept it.
+		if v == "0" {
+			return 0
+		}
+		log.Printf("controller: invalid FUNCTION_IDLE_TIMEOUT %q, using %s", v, fallback)
+		return fallback
+	}
+	return d
+}
+
 func (ms *ManagementService) StartController() {
+	idleTimeout := functionIdleTimeout()
+
+	if idleTimeout <= 0 {
+		log.Printf("controller: function idle teardown disabled (FUNCTION_IDLE_TIMEOUT=%s)",
+			os.Getenv("FUNCTION_IDLE_TIMEOUT"))
+	} else {
+		log.Printf("controller: tearing down functions unused for %s", idleTimeout)
+	}
+
 	go func() {
 		for {
 			time.Sleep(30 * time.Second)
@@ -412,6 +455,12 @@ func (ms *ManagementService) StartController() {
 				log.Println("controller: overloaded system")
 			}
 
+			// Nothing below this point does anything when teardown is
+			// disabled, and polling /lastused every 30s just fills the log.
+			if idleTimeout <= 0 {
+				continue
+			}
+
 			//fetch fromn proxy
 			resp, err := http.Get(fmt.Sprintf("http://%s:%d/lastused", ms.rproxyListenAddress, ms.rproxyConfigPort))
 			if err != nil {
@@ -430,7 +479,7 @@ func (ms *ManagementService) StartController() {
 			//delete functions that have not been used for more than 30 seconds
 			toDelete := []string{}
 			for name, lastUsed := range functionLastUsed {
-				if time.Since(lastUsed) > 30*time.Second {
+				if time.Since(lastUsed) > idleTimeout {
 					log.Printf("controller: function %s has not been used for %s, deleting\n", name, time.Since(lastUsed))
 					toDelete = append(toDelete, name)
 				}

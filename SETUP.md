@@ -593,7 +593,21 @@ sudo systemctl edit tinyfaas
 Environment=NODES_CONFIG=/opt/tinyfaas/nodes.json
 Environment=TINKERFORGE_UID=<relay A UID>
 Environment=POWER_AWARE=true
+Environment=FUNCTION_IDLE_TIMEOUT=0
 ```
+
+`FUNCTION_IDLE_TIMEOUT=0` matters, and it goes on **every** node, workers
+included. tinyFaaS tears down any function unused for 30 s — its own
+function-level scale-to-zero. In this cluster that fights node-level power
+management: the leader still considers a node active and routes to it, while
+the node has quietly deleted the function, so the request 404s. With the
+leader's idle timeout at 60 s and this at 30 s, there is a guaranteed window
+where that happens.
+
+Node power management *is* the scale-to-zero here, so the function-level
+reaper is turned off. Leaving it on would also confound the measurement:
+some of the energy saved would come from container teardown rather than from
+powering nodes down, and it would apply unevenly between the two arms.
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart tinyfaas
 ```
