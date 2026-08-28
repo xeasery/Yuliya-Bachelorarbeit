@@ -28,7 +28,7 @@ once rather than four times over.
                    ┌────┴────┐                ┌────┴────┐
                  ch0│      ch1│             ch0│     ch1│
               ┌─────▼─┐  ┌────▼──┐       ┌─────▼─┐ ┌────▼──┐
-              │edge-1 │  │edge-2 │       │edge-3 │ │edge-4 │
+              │ pi1   │  │ pi2   │       │ pi3   │ │ pi4   │
               └───┬───┘  └───┬───┘       └───┬───┘ └───┬───┘
                   │ one Voltage/Current Bricklet per node
                   └──────────┴───────────────┴─────────┘
@@ -83,21 +83,33 @@ Master Brick(s), and ideally a USB SSD per worker.
 power draw that varies with signal quality and latency that varies with
 interference — both land in your results as noise you cannot explain.
 
-### The decision: hard power cuts and SD cards
+### Hard power cuts and SD cards
 
 The controller powers a node off by opening the relay. There is no
 `shutdown -h now` — it is a hard cut, every time. Across an Azure trace run
-that is on the order of a hundred unclean power cuts per node, and SD card
-corruption is the expected outcome, usually partway through an experiment.
+that is on the order of a hundred unclean power cuts per node, and SD cards
+do eventually corrupt under that.
 
-The fix is a **read-only root filesystem on the workers**, with persistent
-storage for Docker. It is set up across Parts 2 and 8: understand it now,
-because it affects what hardware you want, but do not enable it until the
-worker is otherwise finished.
+**This cluster accepts that risk rather than engineering it away.** The usual
+fix is a read-only root filesystem, but that requires Docker's data directory
+to live on separate persistent storage — otherwise the cached function image
+is discarded on every power cut and each wake re-downloads ~24 MB, which is
+worse than the problem. Without a USB disk per worker, the read-only root is
+not an option.
+
+That is tolerable here because **workers hold no unique state**. There is no
+config on them: `nodes.json` lives on the leader, and the function is pushed
+to them on every wake. A corrupted worker is a re-flash, not a rebuild — and
+Part 8.2 makes an image so that re-flash is ten minutes.
 
 The alternative — a graceful shutdown before each cut — adds ~15 s to every
 power-off, and that delay lands directly in the latency and energy figures
 being measured. It would distort the result rather than just cost time.
+
+If USB disks do turn up later, the read-only root is worth revisiting; the
+arrangement it needs is a persistent mount at `/var/lib/docker` (with
+`nofail`, plus `RequiresMountsFor=/var/lib/docker` on `docker.service` so a
+missing disk fails loudly instead of silently emptying the image cache).
 
 ---
 
@@ -113,7 +125,7 @@ are measuring.
 
 Before writing, open the gear icon and set:
 
-- **Hostname**: `leader`, `edge-1` … `edge-4`. You will be SSHing between five
+- **Hostname**: `controller`, `pi1` … `pi4`. You will be SSHing between five
   identical machines for weeks, and `pi@192.168.0.207` tells you nothing.
 - **Enable SSH**, with public-key authentication
 - **Username and password**
@@ -128,7 +140,7 @@ Options → SSH.
 ### 1.2 Connect
 
 ```bash
-ssh pi@edge-1.local
+ssh pi@pi1.local
 ```
 
 If `.local` does not resolve (mDNS is often blocked on university networks),
@@ -182,42 +194,30 @@ after a reboot.
 
 Write your table down now — you need it for `nodes.json`:
 
-| Role | Hostname | IP | MAC | Relay | Ch | VC Bricklet |
-| --- | --- | --- | --- | --- | --- | --- |
-| leader | leader | 192.168.0.199 | `2c:cf:67:e2:b3:95` | — | — | `26gZ` |
-| worker | edge-1 | 192.168.0.204 | `d8:3a:dd:25:51:46` | `2brr` | 0 | `26vg` |
-| worker | edge-2 | 192.168.0.207 | `d8:3a:dd:25:51:79` | `2brr` | 1 | `26mi` |
-| worker | edge-3 | 192.168.0.133 | `d8:3a:dd:25:45:73` | `2bro` | 0 | `26iw` |
-| worker | edge-4 | 192.168.0.115 | `2c:cf:67:0e:94:cc` | `2bro` | 1 | `26vf` |
+| Role | Host | IP | Relay | Ch | VC Bricklet |
+| --- | --- | --- | --- | --- | --- |
+| leader | controller | 192.168.0.199 | — | — | `26gZ` |
+| worker | pi1 | 192.168.0.133 | `2brr` | 1 | `26vg` |
+| worker | pi2 | 192.168.0.204 | `2brr` | 0 | `26mi` |
+| worker | pi3 | 192.168.0.115 | `2bro` | 1 | `26iw` |
+| worker | pi4 | 192.168.0.207 | `2bro` | 0 | `26vf` |
 
-Bricklets are mapped as `edge-N` = your physical `piN`. **The IP column is the
-part still to confirm**: the addresses were assigned to `edge-1`…`edge-4` in
-an arbitrary order, so if your `pi1` is not 192.168.0.204, the rows need
-reordering. Everything else in this table — relay, channel, bricklet — follows
-the `edge-N` name, so one wrong IP row silently attributes a node's energy and
-power-switching to a different machine.
+Node ids in `nodes.json` and `ENERGY_NODES` are the same `pi1`..`pi4` used by
+the SSH aliases and the physical labels, deliberately: an `edge-N` layer on
+top was what produced a first draft in which every IP was attached to the
+wrong machine.
 
-Confirm it before measuring anything: power on one worker at a time and see
-which address answers.
+Addresses confirmed with `for h in controller pi1 pi2 pi3 pi4; do ssh $h
+hostname -I; done`. Relay and channel assignment is still assumed — confirm
+it with `make verify-wiring` before measuring.
 
-```bash
-ping -c1 192.168.0.204     # is this the machine you call pi1?
-```
-
-Then set the hostnames to match and label the physical machines.
-
-**Check the models are identical:**
+Confirm any change to this table against the machines themselves rather than
+against the DHCP list — the hostname is the only thing that ties a row to a
+physical Pi:
 
 ```bash
-cat /proc/device-tree/model
+for h in controller pi1 pi2 pi3 pi4; do printf "%-12s " $h; ssh $h hostname -I; done
 ```
-
-Two MAC prefixes appear above (`d8:3a:dd` and `2c:cf:67`), which can mean two
-different Pi generations. A mixed cluster is not fatal, but it is something to
-know before you measure: models differ in idle power and in how fast they run
-the function, while the scheduler treats nodes as interchangeable. If they do
-differ, say so in the thesis and keep an eye on the per-node power figures,
-which will not be comparable across models.
 
 ### 1.4 Clocks — do not skip this
 
@@ -239,7 +239,7 @@ sudo timedatectl set-timezone Europe/Berlin
 **Check** — from your Mac, against every machine including the energy host:
 
 ```bash
-date -u +%s ; ssh pi@edge-1 date -u +%s
+date -u +%s ; ssh pi@pi1 date -u +%s
 ```
 
 At most 1 apart. Fix this before measuring anything.
@@ -250,12 +250,20 @@ At most 1 apart. Fix this before measuring anything.
 sudo apt update && sudo apt full-upgrade -y
 
 # swap on SD is slow, wears the card, and adds nothing on a 4-8GB Pi
-sudo systemctl disable --now dphys-swapfile
+# sudo systemctl disable --now dphys-swapfile
 sudo systemctl set-default multi-user.target
 
 # Docker's own installer — the Debian package is often well behind
 curl -fsSL https://get.docker.com | sudo sh
 sudo systemctl enable --now docker
+
+sudo usermod -aG docker pi
+sudo systemctl restart docker
+
+grep docker /etc/group
+
+newgrp docker
+
 ```
 
 **Check:** `docker run --rm hello-world`
@@ -269,6 +277,30 @@ sudo mkdir -p /opt/tinyfaas
 sudo chown -R tinyfaas:tinyfaas /opt/tinyfaas
 ```
 
+1. Copy the binary to the ThinkPad once (from your Mac):
+
+scp -P 60001 tinyfaas-linux-arm64 scalable@141.23.28.219:/tmp/
+
+2. Fan it out from there:
+
+ssh -p 60001 scalable@141.23.28.219
+
+for h in controller pi1 pi2 pi3 pi4; do
+  echo "→ $h"
+  scp /tmp/tinyfaas-linux-arm64 $h:/tmp/
+done
+
+3. Install on each (st
+
+for h in controller pi
+  echo "→ $h"
+  ssh $h 'sudo useradd /usr/sbin/nologintinyfaas 2>/dev/null;
+          sudo usermod
+          sudo mkdir -p /opt/tinyfaas;
+          sudo installm 0755/tmp/tinyfaas-linux-arm64 /opt/tinyfaas/tinyfaas-mgmt;
+          echo "  ok"'
+done
+
 ### 1.7 SSH keys from your Mac
 
 The benchmark scripts open SSH connections non-interactively. A password
@@ -280,72 +312,6 @@ ssh-copy-id pi@192.168.0.101                  # per machine
 ```
 
 **Check:** `ssh pi@192.168.0.101 true` returns immediately, no prompt.
-
----
-
-## Part 2 — Persistent storage for Docker (workers only)
-
-The read-only root comes later, but its storage has to be in place first.
-
-`raspi-config`'s overlay puts the *entire* root in RAM and discards every
-write at boot — including `/var/lib/docker`. The pre-built function image
-would then be lost on every power cut, and every wake would re-download ~24 MB
-of wheels before the node could serve. That makes wakes far slower and defeats
-the caching the design depends on.
-
-A USB SSD is the better choice — the repeated image and container churn is
-hard on SD cards even without power cuts — but a second partition works.
-
-```bash
-lsblk                                    # find the device, e.g. /dev/sda1
-sudo mkfs.ext4 -L dockerdata /dev/sda1
-
-sudo systemctl stop docker
-sudo mkdir -p /mnt/dockerdata
-sudo mount /dev/sda1 /mnt/dockerdata
-sudo rsync -aHAX /var/lib/docker/ /mnt/dockerdata/   # keep existing images
-sudo umount /mnt/dockerdata
-
-echo 'LABEL=dockerdata /var/lib/docker ext4 defaults,noatime,nofail 0 2' \
-  | sudo tee -a /etc/fstab
-sudo mount -a && sudo systemctl start docker
-```
-
-`nofail` matters: without it, a worker whose SSD did not enumerate in time
-refuses to finish booting, and a node that will not boot unattended breaks the
-whole design.
-
-But `nofail` alone creates a subtler problem. If the disk is slow to appear,
-boot carries on *without* it, Docker starts against the empty overlay
-directory, and the cached image is simply not there — so the node re-downloads
-it on every wake and nobody notices, because everything still works, only
-slower. Make Docker wait for the mount:
-
-```bash
-sudo systemctl edit docker.service
-```
-```ini
-[Unit]
-RequiresMountsFor=/var/lib/docker
-```
-
-Now a missing disk stops Docker, which stops tinyFaaS, which means the node
-never answers `/health` and the leader reports it dead. That is a loud failure
-you will notice rather than a quiet one that inflates every wake in your
-results. The machine still boots and is reachable over SSH.
-
-Keep the journal off the overlay too, so a worker's logs survive exactly the
-power cut that makes you want to read them:
-
-```bash
-sudo mkdir -p /mnt/dockerdata/journal
-sudo sed -i 's|^#\?Storage=.*|Storage=persistent|' /etc/systemd/journald.conf
-echo '/mnt/dockerdata/journal /var/log/journal none bind,nofail 0 0' \
-  | sudo tee -a /etc/fstab
-```
-
-**Check:** `docker info | grep "Docker Root Dir"` shows `/var/lib/docker` on
-the new filesystem.
 
 ---
 
@@ -388,13 +354,12 @@ the energy logger.
 The mapping is already recorded in the table in 1.3:
 
 ```
-leader=26gZ  edge-1=26vg  edge-2=26mi  edge-3=26iw  edge-4=26vf
+leader=26gZ  pi1=26vg  pi2=26mi  pi3=26iw  pi4=26vf
 ```
 
-It still depends on `edge-N` naming the machine you call `piN`, which is the
-open question in 1.3. A swapped pair attributes each node's energy to the
-other, and nothing downstream would look wrong — it is the one error here that
-is undetectable after the fact, so confirm the IP-to-machine mapping first.
+A swapped pair attributes each node's energy to the other, and nothing
+downstream would look wrong — it is the one error here that is undetectable
+after the fact. `make verify-wiring` checks it.
 
 ### 3.3 ⚠ Wiring the relays
 
@@ -422,7 +387,8 @@ cd tinyFaaS-ext
 uname -m                      # on a Pi: aarch64 → arm64, armv7l → arm
 make tinyfaas-linux-arm64     # ~162 MB, includes rproxy and all runtimes
 
-for ip in <leader> <edge-1> <edge-2> <edge-3> <edge-4>; do
+for ip in 192.168.0.199 192.168.0.204 192.168.0.207 192.168.0.133 192.168.0.115; do
+  echo "→ $ip"
   scp tinyfaas-linux-arm64 pi@$ip:/tmp/
 done
 ```
@@ -438,7 +404,78 @@ sudo install -o tinyfaas -g tinyfaas -m 0755 \
 executes; a wrong architecture gives `cannot execute binary file`.
 
 ---
+1. Write the unit file once on the ThinkPad:
 
+cat > ~/tinyfaas.service <<'UNIT'
+[Unit]
+Description=tinyFaaS management service
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=tinyfaas
+WorkingDirectory=/opt/tinyfaas
+ExecStart=/opt/tinyfaas/tinyfaas-mgmt
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+2. Copy it to all five:
+
+for h in controller pi1 pi2 pi3 pi4; do scp ~/tinyfaas.service $h:/tmp/; done
+
+3. Install and start, one command per host:
+
+for h in controller pi1 pi2 pi3 pi4; do
+  echo "═══ $h"
+  ssh $h "sudo cp /tmp/tinyfaas.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now tinyfaas && sleep 5 && systemctl is-active tinyfaas"
+done
+
+Everything in step 3 is one double-quoted string with no nesting, so it pastes cleanly.
+
+If Docker isn't yet installed everywhere, run that separately first:
+
+for h in controller pi1 pi2 pi3 pi4; do
+  ssh $h "command -v docker >/dev/null && echo 'docker present' || echo 'DOCKER MISSING'"
+done
+
+✻ Sautéed for 23s
+
+──────────────────────────────────────────────────────────────────────────
+❯ docker present on all five, running step 3 now
+──────────────────────────────────────────────────────────────────────────
+
+1. Are they actually serving? (active only means the process started)
+
+for h in controller pi1 pi2 pi3 pi4; do
+  printf "%-12s " $h
+  ssh $h "curl -fsS --max-time 5 http://localhost:8080/health >/dev/null" && echo OK || echo FAIL
+done
+
+2. Can the leader reach the workers? This is the one that matters — it's exactly what the wake sequence does:
+
+ssh controller 'for ip in 192.168.0.204 192.168.0.207 192.168.0.133 192.168.0.115; do printf "%-16s " $ip; curl -fsS --max-time 5 http://$ip:8080/health >/dev/null && echo OK || echo FAIL; done'
+
+Four OK there means the leader can health-check and deploy to every worker. A FAIL is a firewall or a wrong IP, and it's much easier to find now than as a "node marked dead" during a run.
+
+3. Then brickd on the controller (SETUP 3.1) — this is what lets tinyFaaS switch power at all:
+
+ssh controller "sudo apt install -y brickd && sudo systemctl enable --now brickd && sudo ss -lntp | grep 4223"
+
+Then confirm the two relays are actually visible to it. The Master Brick with 2brr/2bro must be plugged into the controller's USB:
+
+ssh controller "lsusb | grep -i tinkerforge"
+
+If nothing shows, the relays are still on the ThinkPad and need moving — or I point tinyFaaS at the ThinkPad's brickd instead. That's the last unknown before you can test a real wake.
+  ⏵⏵
 ## Part 5 — Start tinyFaaS on boot
 
 On every machine:
@@ -498,7 +535,7 @@ another and every number still looks plausible.
 # on the leader
 cd tinyFaaS-ext
 NODES_CONFIG=deploy/nodes.json \
-ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
+ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf" \
 ENERGY_ADDR=<thinkpad-ip>:4223 \
   make verify-wiring
 ```
@@ -506,9 +543,9 @@ ENERGY_ADDR=<thinkpad-ip>:4223 \
 ```
 node       address  bricklet   verdict
 ──────────────────────────────────────────────────────────
-edge-1     ✓        ✓          ok
-edge-2     ✓        ✗          bricklet mismatch: this machine is
-                               measured by the one mapped to "edge-4"
+pi1        ✓        ✓          ok
+pi2        ✓        ✗          bricklet mismatch: this machine is
+                               measured by the one mapped to "pi4"
 ```
 
 It leaves every worker powered off.
@@ -535,10 +572,10 @@ that relay** (0 or 1), not a cluster-wide index:
 
 | Node | `relay_uid` | `channel` |
 | --- | --- | --- |
-| edge-1 | relay A | 0 |
-| edge-2 | relay A | 1 |
-| edge-3 | relay B | 0 |
-| edge-4 | relay B | 1 |
+| pi1 | `2brr` | 1 |
+| pi2 | `2brr` | 0 |
+| pi3 | `2bro` | 1 |
+| pi4 | `2bro` | 0 |
 
 Numbering them 0,1,2,3 on one relay is rejected at startup, since a dual relay
 has only two channels. Two nodes sharing a relay *and* channel is rejected
@@ -618,7 +655,7 @@ musllinux wheel would have to compile, and would fail.
 
 ---
 
-## Part 8 — Prove a wake cycle, then lock the worker down
+## Part 8 — Prove a wake cycle, then image the card
 
 ### 8.1 The smoke test
 
@@ -631,56 +668,67 @@ base64 -w0 k6_client_BA/assets/input.jpg \
   | curl -s -D- --data-binary @- http://<leader>:8000/edge | head -20
 ```
 
-Expect in the log: `activating node edge-1`, a relay power-on, readiness
-polling, function deploy, `node edge-1 is active`. Expect in the response
-headers: `X-tinyFaaS-Node: edge-1`.
+Expect in the log: `activating node pi1`, a relay power-on, readiness
+polling, function deploy, `node pi1 is active`. Expect in the response
+headers: `X-tinyFaaS-Node: pi1`.
 
 Then leave it idle for longer than `NODE_IDLE_TIMEOUT` (60 s default) and
-confirm `controller: scaling down node edge-1` appears and `/nodes` shows it
+confirm `controller: scaling down node pi1` appears and `/nodes` shows it
 sleeping again.
 
 **This is the checkpoint.** Everything before it is setup; everything after
 assumes it works.
 
-### 8.2 Enable the read-only root (workers)
+### 8.2 Make a golden image
 
-The worker's configuration is now complete, so the overlay can go on. Nothing
-written after this persists.
+This worker is now fully configured, and it holds nothing unique — no
+`nodes.json`, no per-node settings. So an image of its card is both the
+recovery plan for SD corruption and the fastest way to build the other three.
 
-```bash
-sudo raspi-config      # Performance Options → Overlay File System → enable
-                       # answer yes to write-protecting the boot partition too
-sudo reboot
-```
-
-**Check** — this pair is the whole test, that the root discards writes while
-Docker's cache survives:
+Shut it down cleanly, take the card out, and image it from your Mac:
 
 ```bash
-findmnt / | head -2          # overlay, not /dev/mmcblk0p2
-sudo touch /root/canary && sudo reboot
-ls /root/canary              # must be gone
-docker images                # the edge image must still be here
+diskutil list                              # find the card, e.g. /dev/disk4
+diskutil unmountDisk /dev/disk4
+sudo dd if=/dev/rdisk4 of=~/worker-golden.img bs=4m status=progress
 ```
 
-To change anything afterwards:
+Keep that image. A worker that stops booting is then a re-flash, not a
+re-setup.
 
-```bash
-sudo raspi-config nonint disable_overlayfs && sudo reboot
-# ...make the change...
-sudo raspi-config nonint enable_overlayfs && sudo reboot
-```
-
----
+**Check:** put the card back, boot it, and confirm the worker still answers
+`/health`.
 
 ## Part 9 — Replicate to the remaining workers
 
-Repeat Parts 1, 2, 4, 5, 7 and 8.2 on `edge-2`, `edge-3` and `edge-4`, then
-add them to `nodes.json` and restart tinyFaaS on the leader.
+Flash the golden image onto the other three cards (Raspberry Pi Imager can
+write a custom `.img`, or use `dd` in reverse), then fix the three things
+that must not be shared between cloned machines:
+
+```bash
+# on each freshly flashed worker, via monitor or its DHCP-assigned address
+sudo hostnamectl set-hostname pi2
+
+# a cloned machine-id makes DHCP hand out the same lease to every clone
+sudo rm -f /etc/machine-id /var/lib/dbus/machine-id
+sudo systemd-machine-id-setup
+sudo dbus-uuidgen --ensure
+
+# cloned SSH host keys mean all four present the same identity
+sudo rm -f /etc/ssh/ssh_host_*
+sudo dpkg-reconfigure openssh-server
+
+sudo reboot
+```
+
+Then set its DHCP reservation to the address in the table in 1.3, add it to
+`nodes.json` on the leader, and restart tinyFaaS there.
+
+The machine-id step matters more than it looks: with identical machine-ids,
+DHCP can hand every clone the same address, and you get workers that
+intermittently vanish for no visible reason.
 
 **Check:** `/nodes` lists all five, and a request wakes each in turn.
-
----
 
 ## Part 10 — Energy logger
 
@@ -730,7 +778,7 @@ machine timing your power samples.
 Test it manually once:
 
 ```bash
-sudo env ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
+sudo env ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf" \
   ./energy-logger
 ```
 
@@ -765,7 +813,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 
 export ORCH_USER=<user> ORCH_HOST=<leader-ip> ORCH_SSH_PORT=22
 export REMOTE_ENERGY_HOST=<energy host> REMOTE_ENERGY_USER=<user>
-export ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf"
+export ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf"
 
 # baseline: leader started with POWER_AWARE=false
 EXPERIMENT_NAME=low_load_baseline    scripts/run_low_load.sh
@@ -795,8 +843,6 @@ bars, and wake timing in particular varies a lot.
 | systemd unit enabled | ✓ | ✓ | ✗ |
 | `nodes.json` + env | ✓ | ✗ | ✗ |
 | brickd | ✓ (relays) | ✗ | ✓ (VC bricklets) |
-| Persistent Docker disk | ✗ | ✓ | ✗ |
-| Read-only root | ✗ | ✓ | ✗ |
 | Passwordless sudo | ✗ | ✗ | ✓ |
 | Power via relay | **never** | ✓ | ✗ |
 
@@ -804,7 +850,7 @@ bars, and wake timing in particular varies a lot.
 
 | Symptom | Cause |
 | --- | --- |
-| `ssh: Could not resolve hostname edge-1.local` | mDNS blocked; use the IP. |
+| `ssh: Could not resolve hostname pi1.local` | mDNS blocked; use the IP. |
 | `Permission denied (publickey,password)` | Key not copied, or the username differs from your Mac's. |
 | `docker: permission denied` | User not in the `docker` group, or you did not log out and back in. |
 | Random reboots under load | Underpowered PSU. A Pi 4 needs a genuine 5V/3A supply. |
@@ -822,7 +868,4 @@ bars, and wake timing in particular varies a lot.
 | Energy figures look implausible | Clock skew between the Mac and the energy host — see 1.4. |
 | Energy logger never starts during a run | sudo is prompting for a password over SSH — see Part 10. |
 | Worker never comes back after a power cut | `systemctl is-enabled tinyfaas` — installed but not enabled. |
-| `edge` image gone after a power cut, wakes slow | `/var/lib/docker` is inside the overlay; needs persistent storage (Part 2). |
-| A worker hangs at boot | Persistent disk missing from `/etc/fstab` without `nofail`. |
-| Config change vanished after reboot | The overlay is active; see 8.2. |
 | Workers stop booting after some days | SD card corruption from hard power cuts — see Part 0. |

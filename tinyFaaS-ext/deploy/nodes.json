@@ -1,13 +1,17 @@
 {
   "_comment": [
-    "The real cluster topology. Copy to /opt/tinyfaas/nodes.json on the",
-    "leader and point NODES_CONFIG at it.",
+    "Cluster topology. Copy to /opt/tinyfaas/nodes.json on the controller",
+    "and point NODES_CONFIG at it.",
     "",
-    "Relay A = 2brr, Relay B = 2bro. These UIDs differ only in the last",
-    "character, so check them against Brick Viewer rather than by eye.",
+    "Node ids match the SSH aliases and physical labels (pi1..pi4) so there",
+    "is no name translation to get wrong. The energy logger uses the same",
+    "ids: ENERGY_NODES=\"leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf\".",
     "",
-    "channel is the channel ON THAT RELAY (0 or 1), not a cluster-wide index.",
-    "The leader is never power-cycled and so has no relay or channel."
+    "channel is the channel ON THAT RELAY (0 or 1), not a cluster-wide",
+    "index. Relay/channel assignment is still to be confirmed with",
+    "`make verify-wiring`.",
+    "",
+    "The controller is never power-cycled and so has no relay or channel."
   ],
   "nodes": [
     {
@@ -15,30 +19,30 @@
       "local": true
     },
     {
-      "id": "edge-1",
-      "address": "192.168.0.204:8000",
-      "manager_address": "192.168.0.204:8080",
+      "id": "pi1",
+      "address": "192.168.0.133:8000",
+      "manager_address": "192.168.0.133:8080",
       "relay_uid": "2brr",
       "channel": 1
     },
     {
-      "id": "edge-2",
-      "address": "192.168.0.207:8000",
-      "manager_address": "192.168.0.207:8080",
+      "id": "pi2",
+      "address": "192.168.0.204:8000",
+      "manager_address": "192.168.0.204:8080",
       "relay_uid": "2brr",
       "channel": 0
     },
     {
-      "id": "edge-3",
-      "address": "192.168.0.133:8000",
-      "manager_address": "192.168.0.133:8080",
+      "id": "pi3",
+      "address": "192.168.0.115:8000",
+      "manager_address": "192.168.0.115:8080",
       "relay_uid": "2bro",
       "channel": 1
     },
     {
-      "id": "edge-4",
-      "address": "192.168.0.115:8000",
-      "manager_address": "192.168.0.115:8080",
+      "id": "pi4",
+      "address": "192.168.0.207:8000",
+      "manager_address": "192.168.0.207:8080",
       "relay_uid": "2bro",
       "channel": 0
     }
