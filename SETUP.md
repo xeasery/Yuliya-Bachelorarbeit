@@ -511,9 +511,22 @@ edge-2     ✓        ✗          bricklet mismatch: this machine is
                                measured by the one mapped to "edge-4"
 ```
 
-It leaves every worker powered off. Reading the energy bricklets needs
-`listen.address = 0.0.0.0` in the ThinkPad's `/etc/brickd.conf`; without it
-the tool still checks relays and addresses and says so.
+It leaves every worker powered off.
+
+Reading the energy bricklets means reaching the ThinkPad's brickd, which
+listens on loopback only — normal, and fine for everything else, because the
+logger runs on that machine. Rather than opening it up (it is a shared
+machine), tunnel it for the duration of the check. On the leader:
+
+```bash
+ssh -N -L 4224:localhost:4223 -p 60001 scalable@141.23.28.219 &
+```
+
+then use `ENERGY_ADDR=localhost:4224`. Port 4224 because 4223 is already the
+leader's own brickd, serving the relays.
+
+Without the tunnel the tool still checks relays and addresses, and says that
+it skipped the rest.
 
 The leader's own bricklet (`26gZ`) cannot be checked this way — it is never
 powered off. It is verifiable by elimination: it is the one series that never
@@ -678,9 +691,19 @@ git clone https://github.com/xeasery/energy-measurements ~/energy-measurements
 cd ~/energy-measurements && make build
 ```
 
-The run scripts start it over SSH with `sudo`, non-interactively — with a
-normal sudo configuration that prompt has nowhere to go, and the run either
-stalls or silently continues with no energy data:
+**Key-based SSH to this host is required, not optional.** The run scripts
+open the connection non-interactively; a password prompt has nowhere to go.
+The energy host currently accepts passwords only, so from your Mac:
+
+```bash
+ssh-copy-id -p 60001 scalable@141.23.28.219
+ssh -o BatchMode=yes -p 60001 scalable@141.23.28.219 true && echo OK
+```
+
+The same applies to `sudo`. The run scripts invoke it over that
+non-interactive connection, and with a normal sudo configuration the prompt
+has nowhere to go — the run either stalls or silently continues with no
+energy data:
 
 ```bash
 sudo visudo -f /etc/sudoers.d/energy-logger
