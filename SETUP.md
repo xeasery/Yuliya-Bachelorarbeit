@@ -730,9 +730,13 @@ machine timing your power samples.
 Test it manually once:
 
 ```bash
-ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
-  sudo ./energy-logger
+sudo env ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
+  ./energy-logger
 ```
+
+`sudo env`, not `VAR=... sudo` — sudo resets the environment, so variables set
+before it never reach the logger and it refuses to start with no bricklets
+configured.
 
 **Check** every node actually reports — a bricklet that never reports
 contributes nothing to the total, which looks exactly like a node that was
