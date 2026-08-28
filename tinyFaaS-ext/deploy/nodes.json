@@ -19,28 +19,28 @@
       "address": "192.168.0.204:8000",
       "manager_address": "192.168.0.204:8080",
       "relay_uid": "2brr",
-      "channel": 0
+      "channel": 1
     },
     {
       "id": "edge-2",
       "address": "192.168.0.207:8000",
       "manager_address": "192.168.0.207:8080",
       "relay_uid": "2brr",
-      "channel": 1
+      "channel": 0
     },
     {
       "id": "edge-3",
       "address": "192.168.0.133:8000",
       "manager_address": "192.168.0.133:8080",
       "relay_uid": "2bro",
-      "channel": 0
+      "channel": 1
     },
     {
       "id": "edge-4",
       "address": "192.168.0.115:8000",
       "manager_address": "192.168.0.115:8080",
       "relay_uid": "2bro",
-      "channel": 1
+      "channel": 0
     }
   ]
 }

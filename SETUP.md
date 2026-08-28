@@ -182,20 +182,29 @@ after a reboot.
 
 Write your table down now — you need it for `nodes.json`:
 
-| Role | Hostname | IP | MAC | Relay | Channel | VC Bricklet |
+| Role | Hostname | IP | MAC | Relay | Ch | VC Bricklet |
 | --- | --- | --- | --- | --- | --- | --- |
-| leader | leader | 192.168.0.199 | `2c:cf:67:e2:b3:95` | — | — | |
-| worker | edge-1 | 192.168.0.204 | `d8:3a:dd:25:51:46` | A | 0 | |
-| worker | edge-2 | 192.168.0.207 | `d8:3a:dd:25:51:79` | A | 1 | |
-| worker | edge-3 | 192.168.0.133 | `d8:3a:dd:25:45:73` | B | 0 | |
-| worker | edge-4 | 192.168.0.115 | `2c:cf:67:0e:94:cc` | B | 1 | |
+| leader | leader | 192.168.0.199 | `2c:cf:67:e2:b3:95` | — | — | `26gZ` |
+| worker | edge-1 | 192.168.0.204 | `d8:3a:dd:25:51:46` | `2brr` | 0 | `26vg` |
+| worker | edge-2 | 192.168.0.207 | `d8:3a:dd:25:51:79` | `2brr` | 1 | `26mi` |
+| worker | edge-3 | 192.168.0.133 | `d8:3a:dd:25:45:73` | `2bro` | 0 | `26iw` |
+| worker | edge-4 | 192.168.0.115 | `2c:cf:67:0e:94:cc` | `2bro` | 1 | `26vf` |
 
-The worker-to-hostname assignment above is arbitrary until you set the
-hostnames — all five currently report `raspberrypi`, so pick an order, set it,
-and label the physical machines to match. Which worker is which only has to be
-*consistent*, not any particular way round.
+Bricklets are mapped as `edge-N` = your physical `piN`. **The IP column is the
+part still to confirm**: the addresses were assigned to `edge-1`…`edge-4` in
+an arbitrary order, so if your `pi1` is not 192.168.0.204, the rows need
+reordering. Everything else in this table — relay, channel, bricklet — follows
+the `edge-N` name, so one wrong IP row silently attributes a node's energy and
+power-switching to a different machine.
 
-Fill in the relay and bricklet columns as you work through Part 3.
+Confirm it before measuring anything: power on one worker at a time and see
+which address answers.
+
+```bash
+ping -c1 192.168.0.204     # is this the machine you call pi1?
+```
+
+Then set the hostnames to match and label the physical machines.
 
 **Check the models are identical:**
 
@@ -376,13 +385,16 @@ ThinkPad should list the five Voltage/Current Bricklets.
 You need the two relay UIDs for `nodes.json`, and the five bricklet UIDs for
 the energy logger.
 
-**Map bricklets to nodes before anything else.** Brick Viewer gives you UIDs
-but not what each is wired to. Power on **one** node at a time and watch which
-bricklet's current rises; the rest sit near zero. A swapped pair attributes
-each node's energy to the other, and nothing downstream would look wrong —
-it is the one error here that is undetectable after the fact.
+The mapping is already recorded in the table in 1.3:
 
-Fill in the VC Bricklet column of your table from 1.3.
+```
+leader=26gZ  edge-1=26vg  edge-2=26mi  edge-3=26iw  edge-4=26vf
+```
+
+It still depends on `edge-N` naming the machine you call `piN`, which is the
+open question in 1.3. A swapped pair attributes each node's energy to the
+other, and nothing downstream would look wrong — it is the one error here that
+is undetectable after the fact, so confirm the IP-to-machine mapping first.
 
 ### 3.3 ⚠ Wiring the relays
 
@@ -675,7 +687,7 @@ machine timing your power samples.
 Test it manually once:
 
 ```bash
-ENERGY_NODES="leader=26vf,edge-1=26mi,edge-2=26iw,edge-3=26vg,edge-4=26gZ" \
+ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf" \
   sudo ./energy-logger
 ```
 
@@ -706,7 +718,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 
 export ORCH_USER=<user> ORCH_HOST=<leader-ip> ORCH_SSH_PORT=22
 export REMOTE_ENERGY_HOST=<energy host> REMOTE_ENERGY_USER=<user>
-export ENERGY_NODES="leader=26vf,edge-1=26mi,edge-2=26iw,edge-3=26vg,edge-4=26gZ"
+export ENERGY_NODES="leader=26gZ,edge-1=26vg,edge-2=26mi,edge-3=26iw,edge-4=26vf"
 
 # baseline: leader started with POWER_AWARE=false
 EXPERIMENT_NAME=low_load_baseline    scripts/run_low_load.sh
