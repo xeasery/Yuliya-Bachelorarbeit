@@ -57,19 +57,30 @@ func PickNode(nodes []Node, loadThreshold int) (Node, bool) {
 
 	// Priority order:
 
-	// 1. best healthy active node
+	// 1. an active node with capacity to spare -- always cheapest, no wake
 	if bestActive != nil {
 		return *bestActive, true
 	}
 
-	// 2. any active node under pressure (still better than waking)
-	if bestIdleActive != nil {
-		return *bestIdleActive, true
-	}
-
-	// 3. sleeping node (will trigger activation in HTTP layer)
+	// 2. a sleeping node, in preference to an already-saturated one.
+	//
+	// This ordering is what makes the cluster scale out at all. Sending the
+	// request to a loaded active node instead would avoid the wake latency,
+	// but the leader is always active and never sleeps, so a sleeping node
+	// would then only ever be chosen if every active node had died -- the
+	// workers would stay powered off no matter how much load arrived, and
+	// the cluster would silently be a single machine.
+	//
+	// Waking costs seconds once, and buys a node that serves every
+	// subsequent request until it goes idle again. Spreading load across
+	// nodes is the point of having them.
 	if bestSleeping != nil {
 		return *bestSleeping, true
+	}
+
+	// 3. everything awake is already loaded, and nothing is left to wake
+	if bestIdleActive != nil {
+		return *bestIdleActive, true
 	}
 
 	// 4. absolute fallback
