@@ -50,11 +50,38 @@ func deployTimeoutFromEnv() time.Duration {
 
 // healthCheckAttempts/healthCheckInterval bound how long waitForNodeReady
 // polls before giving up. Package-level vars (rather than constants) so
-// tests can shrink them instead of waiting out the real 15s budget.
+// tests can shrink them instead of waiting out the real budget.
+//
+// The budget has to cover a cold boot, not a warm one: relay closed, kernel
+// up, Docker started, tinyFaaS started, /health answering. On a Raspberry Pi
+// that is comfortably half a minute and can exceed a minute on a loaded SD
+// card. A 15s budget looked adequate only because the nodes under test were
+// already powered on, so /health answered on the first attempt; against a
+// genuinely cold node every wake failed after the relay had switched it on,
+// leaving a healthy node marked dead and drawing power.
+//
+// Overshooting costs nothing -- polling stops the moment the node answers --
+// while undershooting fails the wake. Override with NODE_BOOT_TIMEOUT.
 var (
-	healthCheckAttempts = 30
-	healthCheckInterval = 500 * time.Millisecond
+	healthCheckInterval = time.Second
+	healthCheckAttempts = int(bootTimeoutFromEnv() / time.Second)
 )
+
+func bootTimeoutFromEnv() time.Duration {
+	const fallback = 3 * time.Minute
+
+	v := os.Getenv("NODE_BOOT_TIMEOUT")
+	if v == "" {
+		return fallback
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		log.Printf("config: invalid NODE_BOOT_TIMEOUT=%q, using %s", v, fallback)
+		return fallback
+	}
+	return d
+}
 
 // PowerController abstracts the hardware relay so the registry can be
 // tested without real Tinkerforge hardware. *tinkerforgefunc.TinkerforgeController
@@ -226,6 +253,11 @@ func (r *Registry) ActivateNode(id string) error {
 
 	if err == nil {
 		log.Printf("node %s is active", id)
+	} else {
+		// Without this a failed wake logs nothing after "powering ON", so a
+		// node that never came up is indistinguishable from one still
+		// coming up.
+		log.Printf("node %s failed to activate: %v", id, err)
 	}
 
 	return err
@@ -244,7 +276,9 @@ func (r *Registry) wakeNode(id, relayUID string, channel int, managerAddress str
 	// wait for readiness (replace sleep-based startup)
 	if !waitForNodeReady(managerAddress) {
 		r.SetStatus(id, NodeDead)
-		return fmt.Errorf("node %s failed readiness check", id)
+		return fmt.Errorf("node %s did not answer http://%s/health within %s of power-on",
+			id, managerAddress,
+			time.Duration(healthCheckAttempts)*healthCheckInterval)
 	}
 
 	// The node booted with no containers running, so every known function
