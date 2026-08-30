@@ -219,3 +219,14 @@ func TestControllerConfigFromEnv_InvalidValuesFallBackToDefaults(t *testing.T) {
 		t.Errorf("expected fallback to %d, got %d", def.MinActiveNodes, cfg.MinActiveNodes)
 	}
 }
+
+func TestValidateNodes_RejectsAllDispatchOnly(t *testing.T) {
+	nodes := []Node{
+		{ID: "leader", Local: true, DispatchOnly: true},
+		{ID: "pi1", Address: "a:1", ManagerAddress: "a:2", Channel: 0, DispatchOnly: true},
+	}
+
+	if err := ValidateNodes(nodes); err == nil {
+		t.Fatal("a cluster where nothing can execute must be rejected")
+	}
+}

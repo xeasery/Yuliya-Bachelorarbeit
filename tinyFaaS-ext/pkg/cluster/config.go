@@ -213,6 +213,16 @@ func ValidateNodes(nodes []Node) error {
 		return fmt.Errorf("expected exactly one node with \"local\": true, found %d", locals)
 	}
 
+	executors := 0
+	for _, n := range nodes {
+		if !n.DispatchOnly {
+			executors++
+		}
+	}
+	if executors == 0 {
+		return fmt.Errorf("every node is dispatch_only, so nothing can run functions")
+	}
+
 	return nil
 }
 

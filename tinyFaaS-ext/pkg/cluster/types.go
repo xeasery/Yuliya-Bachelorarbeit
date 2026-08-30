@@ -32,4 +32,15 @@ type Node struct {
 	LastUsed time.Time `json:"last_used"`
 
 	Local bool `json:"local"` // true if this is the current machine
+
+	// DispatchOnly excludes a node from executing functions: it schedules
+	// and powers other nodes but never serves a request itself.
+	//
+	// This is what the leader normally wants. It is never powered down, so
+	// if it also executed functions its draw would vary with load and mix
+	// work energy into what should be a constant baseline -- and, because
+	// an active node is always preferred to a sleeping one when it has
+	// capacity, a leader that serves would absorb light load indefinitely
+	// and no worker would ever wake.
+	DispatchOnly bool `json:"dispatch_only"`
 }

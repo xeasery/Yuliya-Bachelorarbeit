@@ -25,9 +25,13 @@ func StartController(reg *Registry, cfg ControllerConfig) {
 
 			nodes := reg.ListNodes()
 
+			// Count only nodes that can actually serve: a dispatch-only
+			// leader is always active but contributes no capacity, so
+			// counting it would let the floor be satisfied while every
+			// executing node was asleep.
 			activeCount := 0
 			for _, n := range nodes {
-				if n.Status == NodeActive {
+				if n.Status == NodeActive && !n.DispatchOnly {
 					activeCount++
 				}
 			}

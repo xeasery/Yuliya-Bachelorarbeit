@@ -25,6 +25,11 @@ func PickNode(nodes []Node, loadThreshold int) (Node, bool) {
 			continue
 		}
 
+		// a dispatch-only node schedules work but never runs it
+		if n.DispatchOnly {
+			continue
+		}
+
 		// 1. Prefer active nodes under load threshold
 		if n.Status == NodeActive && n.Load < loadThreshold {
 			if bestActive == nil || n.Load < bestActive.Load {

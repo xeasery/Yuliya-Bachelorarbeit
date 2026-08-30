@@ -92,3 +92,33 @@ func TestPickNode_FallsBackToSleepingWhenNoneActive(t *testing.T) {
 		t.Fatalf("expected sleeping node as cold-start candidate, got %s", n.ID)
 	}
 }
+
+func TestPickNode_SkipsDispatchOnlyLeader(t *testing.T) {
+	// With the leader excluded, the first request has no active node to go
+	// to and wakes a worker -- which is how the cluster is meant to behave.
+	nodes := []Node{
+		{ID: "leader", Status: NodeActive, Load: 0, Local: true, DispatchOnly: true},
+		{ID: "pi1", Status: NodeSleeping},
+	}
+
+	n, ok := PickNode(nodes, DefaultLoadThreshold)
+	if !ok {
+		t.Fatal("expected a node to be picked")
+	}
+	if n.ID != "pi1" {
+		t.Fatalf("expected the sleeping worker, got %s", n.ID)
+	}
+}
+
+func TestPickNode_NoneWhenOnlyDispatchOnlyRemains(t *testing.T) {
+	// Better to fail the request than to route it to a node that cannot run
+	// anything: a 503 is visible, a silent 404 from the leader is not.
+	nodes := []Node{
+		{ID: "leader", Status: NodeActive, Local: true, DispatchOnly: true},
+		{ID: "pi1", Status: NodeDead},
+	}
+
+	if _, ok := PickNode(nodes, DefaultLoadThreshold); ok {
+		t.Fatal("expected no node to be picked when only a dispatch-only node is left")
+	}
+}
