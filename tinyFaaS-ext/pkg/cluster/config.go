@@ -237,14 +237,3 @@ func relayLabel(uid string) string {
 	}
 	return uid
 }
-
-// AllActive returns a copy of nodes with every node marked active, for the
-// always-on baseline.
-func AllActive(nodes []Node) []Node {
-	out := make([]Node, len(nodes))
-	copy(out, nodes)
-	for i := range out {
-		out[i].Status = NodeActive
-	}
-	return out
-}

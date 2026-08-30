@@ -283,6 +283,12 @@ func (r *Registry) wakeNode(id, relayUID string, channel int, managerAddress str
 
 // PrewarmAll brings every node up front, for the always-on baseline.
 //
+// Nodes stay recorded as sleeping until this actually powers them on, rather
+// than being marked active up front: ActivateNode returns immediately for a
+// node it already believes is active, so pre-marking them would skip the
+// power-on entirely and leave the cluster switched off while claiming
+// otherwise.
+//
 // Marking nodes active without actually powering them on would be worse
 // than useless: the scheduler would route to a node that is physically off
 // and every one of those requests would fail, quietly ruining the baseline

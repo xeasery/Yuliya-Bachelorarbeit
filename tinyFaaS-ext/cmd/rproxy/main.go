@@ -122,12 +122,6 @@ func main() {
 		log.Fatalf("cluster topology: %v", err)
 	}
 
-	// The baseline runs the same cluster with power management off, so the
-	// two arms differ only in whether nodes are ever powered down.
-	if !cfg.Enabled {
-		nodes = cluster.AllActive(nodes)
-	}
-
 	for _, n := range nodes {
 		log.Printf("cluster: node %s (local=%v channel=%d) starts %s",
 			n.ID, n.Local, n.Channel, n.Status)

@@ -160,27 +160,6 @@ func TestValidateNodes_AcceptsValidTopology(t *testing.T) {
 	}
 }
 
-func TestAllActive_MarksEveryNodeActiveWithoutMutatingInput(t *testing.T) {
-	nodes := []Node{
-		{ID: "local", Local: true, Status: NodeActive},
-		{ID: "edge-1", Status: NodeSleeping},
-		{ID: "edge-2", Status: NodeSleeping},
-	}
-
-	got := AllActive(nodes)
-
-	for _, n := range got {
-		if n.Status != NodeActive {
-			t.Errorf("node %s should be active, got %s", n.ID, n.Status)
-		}
-	}
-	// The caller may still want the configured topology afterwards; a
-	// baseline switch that silently rewrote it would be a nasty surprise.
-	if nodes[1].Status != NodeSleeping {
-		t.Error("AllActive must not mutate its input")
-	}
-}
-
 func TestControllerConfigFromEnv(t *testing.T) {
 	t.Setenv("POWER_AWARE", "false")
 	t.Setenv("NODE_IDLE_TIMEOUT", "5m")
