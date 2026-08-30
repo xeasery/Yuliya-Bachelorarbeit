@@ -138,7 +138,13 @@ func main() {
 	// effect either way, so a run's logs record what was measured.
 	cluster.StartController(reg, cfg)
 
-	if !cfg.Enabled {
+	if cfg.Enabled {
+		// Make the relays agree with what the registry believes. Workers
+		// start recorded as sleeping, but a relay holds its last position,
+		// so a node left powered on would keep drawing while the leader
+		// counted it as off.
+		go reg.EnforceSleeping()
+	} else {
 		// Bring the cluster up in the background so the endpoints can start
 		// listening immediately; waking every node can take a while.
 		go reg.PrewarmAll()

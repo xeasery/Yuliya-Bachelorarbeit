@@ -320,6 +320,32 @@ func (r *Registry) PrewarmAll() {
 	log.Printf("prewarm: %d/%d nodes active", active, len(r.ListNodes()))
 }
 
+// EnforceSleeping opens the relay for every node the registry believes is
+// asleep, so the cluster's physical state matches its recorded state.
+//
+// Without this the two can disagree indefinitely. The registry starts every
+// worker as sleeping, but a relay holds whatever position it was left in, so
+// a node that was powered on before startup keeps running while the leader
+// believes it is off. Nothing corrects that later: the controller only ever
+// powers down nodes it considers active.
+//
+// The cost of the disagreement is silent and lands directly on the
+// measurement -- several watts per node attributed to nothing, in a system
+// whose entire purpose is accounting for those watts.
+func (r *Registry) EnforceSleeping() {
+	for _, n := range r.ListNodes() {
+		if n.Local || n.Status != NodeSleeping {
+			continue
+		}
+
+		if err := r.ctrl.PowerOff(n.RelayUID, n.Channel); err != nil {
+			log.Printf("startup: could not power off %s, which is recorded as sleeping: %v", n.ID, err)
+			continue
+		}
+		log.Printf("startup: powered off %s to match its recorded state", n.ID)
+	}
+}
+
 // DeactivateNode powers a node off via the Tinkerforge relay and marks it
 // sleeping.
 func (r *Registry) DeactivateNode(id string) error {

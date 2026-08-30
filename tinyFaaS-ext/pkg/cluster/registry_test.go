@@ -432,3 +432,27 @@ func TestBroadcastDelete_OnlyReachesActiveRemoteNodes(t *testing.T) {
 		t.Fatalf("expected active node to receive the broadcast delete, got %v", got)
 	}
 }
+
+func TestEnforceSleeping_PowersOffNodesRecordedAsAsleep(t *testing.T) {
+	// A relay keeps its last position across restarts, so a node recorded as
+	// sleeping may well still be running. Nothing else corrects that: the
+	// controller only powers down nodes it thinks are active, so the draw
+	// would go unaccounted for indefinitely.
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, NewFunctionStore())
+
+	reg.AddNode(Node{ID: "leader", Local: true, Status: NodeActive, DispatchOnly: true})
+	reg.AddNode(Node{ID: "pi1", Address: "a:1", ManagerAddress: "a:2", RelayUID: "2brr", Channel: 1, Status: NodeSleeping})
+	reg.AddNode(Node{ID: "pi2", Address: "b:1", ManagerAddress: "b:2", RelayUID: "2brr", Channel: 0, Status: NodeSleeping})
+	reg.AddNode(Node{ID: "pi3", Address: "c:1", ManagerAddress: "c:2", RelayUID: "2bro", Channel: 1, Status: NodeActive})
+
+	reg.EnforceSleeping()
+
+	if got := ctrl.offCallCount(); got != 2 {
+		t.Fatalf("expected the two sleeping workers to be powered off, got %d calls", got)
+	}
+
+	if n, _ := reg.GetNode("pi3"); n.Status != NodeActive {
+		t.Errorf("an active node must be left alone, got %s", n.Status)
+	}
+}
