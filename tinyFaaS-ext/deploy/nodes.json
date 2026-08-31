@@ -16,7 +16,7 @@
     "a function itself, so its draw is constant rather than load-dependent.",
     "",
     "Energy logger uses the same ids:",
-    "ENERGY_NODES=\"leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf\"."
+    "ENERGY_NODES=\"leader=26gZ,pi1=26mi,pi2=26vf,pi4=26iw\"."
   ],
   "nodes": [
     {
