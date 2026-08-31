@@ -38,3 +38,7 @@ POWER_AWARE=true  ...   # power-aware
 
 Both halves of the trade-off are reported: energy and node-time saved, against
 the wake latency paid for it.
+
+
+For Thinkpad energy measurements:
+cd ~/energy-measurements && sudo env ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf" ./energy-logger

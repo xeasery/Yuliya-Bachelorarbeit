@@ -199,8 +199,14 @@ Write your table down now — you need it for `nodes.json`:
 | leader | controller | 192.168.0.199 | — | — | `26gZ` |
 | worker | pi1 | 192.168.0.133 | `2brr` | 1 | `26vg` |
 | worker | pi2 | 192.168.0.204 | `2brr` | 0 | `26mi` |
-| worker | pi3 | 192.168.0.115 | `2bro` | 1 | `26iw` |
+| ~~worker~~ | ~~pi3~~ | ~~192.168.0.115~~ | ~~`2bro` 1~~ | | ~~`26iw`~~ — **excluded**, see below |
 | worker | pi4 | 192.168.0.207 | `2bro` | 0 | `26vf` |
+
+**pi3 is excluded from the cluster.** It would not power down when instructed
+and later would not wake, and the cause was never established. Its relay
+channel is left open so it stays off, and it is neither scheduled nor
+measured. Three workers demonstrate the mechanism as well as four; the
+node count is a parameter of the setup, not of the design.
 
 Node ids in `nodes.json` and `ENERGY_NODES` are the same `pi1`..`pi4` used by
 the SSH aliases and the physical labels, deliberately: an `edge-N` layer on
@@ -354,7 +360,7 @@ the energy logger.
 The mapping is already recorded in the table in 1.3:
 
 ```
-leader=26gZ  pi1=26vg  pi2=26mi  pi3=26iw  pi4=26vf
+leader=26gZ  pi1=26vg  pi2=26mi  pi4=26vf
 ```
 
 A swapped pair attributes each node's energy to the other, and nothing
@@ -535,7 +541,7 @@ another and every number still looks plausible.
 # on the leader
 cd tinyFaaS-ext
 NODES_CONFIG=deploy/nodes.json \
-ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf" \
+ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf" \
 ENERGY_ADDR=<thinkpad-ip>:4223 \
   make verify-wiring
 ```
@@ -792,7 +798,7 @@ machine timing your power samples.
 Test it manually once:
 
 ```bash
-sudo env ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf" \
+sudo env ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf" \
   ./energy-logger
 ```
 
@@ -827,7 +833,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 
 export ORCH_USER=<user> ORCH_HOST=<leader-ip> ORCH_SSH_PORT=22
 export REMOTE_ENERGY_HOST=<energy host> REMOTE_ENERGY_USER=<user>
-export ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi3=26iw,pi4=26vf"
+export ENERGY_NODES="leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf"
 
 # baseline: leader started with POWER_AWARE=false
 EXPERIMENT_NAME=low_load_baseline    scripts/run_low_load.sh
