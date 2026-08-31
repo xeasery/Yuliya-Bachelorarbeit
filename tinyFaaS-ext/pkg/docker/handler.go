@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -63,6 +64,76 @@ func New(tinyFaaSID string) *DockerBackend {
 }
 
 func (db *DockerBackend) Stop() error {
+	return nil
+}
+
+// RemoveOrphans deletes every tinyFaaS-labelled container, network and image
+// left behind by a previous run of this process.
+//
+// It exists because Docker's state outlives the management service while the
+// service's own record of it does not. Function handlers live in an in-memory
+// map, so a node that is power-cycled -- which is the normal case in a
+// power-managed cluster -- comes back with an empty map and no knowledge of
+// the containers and networks still present on disk. Nothing then ever
+// removes them: teardown only runs for handlers the current process created.
+//
+// Left alone they accumulate one network per wake. Docker allocates those
+// from 172.17.0.0/12, and once that is exhausted network creation either
+// fails outright or, depending on the daemon's default-address-pools, spills
+// into 192.168.0.0/16. On a cluster that lives on 192.168.0.0/24 the result
+// is a bridge overlapping the LAN, and a node that is powered and healthy but
+// unreachable -- with nothing in its own logs to explain why.
+//
+// Anything carrying the tinyFaaS label at startup is by definition an orphan:
+// this process has not created anything yet.
+func (db *DockerBackend) RemoveOrphans() error {
+	ctx := context.Background()
+	orphans := filters.NewArgs(filters.Arg("label", "tinyFaaS"))
+
+	containers, err := db.client.ContainerList(ctx, container.ListOptions{
+		All: true, Filters: orphans,
+	})
+	if err != nil {
+		return fmt.Errorf("list orphaned containers: %w", err)
+	}
+	for _, c := range containers {
+		if err := db.client.ContainerRemove(ctx, c.ID,
+			container.RemoveOptions{Force: true}); err != nil {
+			log.Printf("cleanup: could not remove container %s: %s", c.ID[:12], err)
+			continue
+		}
+		log.Printf("cleanup: removed orphaned container %s", c.ID[:12])
+	}
+
+	networks, err := db.client.NetworkList(ctx, network.ListOptions{Filters: orphans})
+	if err != nil {
+		return fmt.Errorf("list orphaned networks: %w", err)
+	}
+	for _, n := range networks {
+		if err := db.client.NetworkRemove(ctx, n.ID); err != nil {
+			log.Printf("cleanup: could not remove network %s: %s", n.Name, err)
+			continue
+		}
+		log.Printf("cleanup: removed orphaned network %s", n.Name)
+	}
+
+	// Images are pruned last: a network cannot be removed while a container
+	// is attached, and an image cannot be removed while a container exists.
+	images, err := db.client.ImageList(ctx, image.ListOptions{Filters: orphans})
+	if err != nil {
+		return fmt.Errorf("list orphaned images: %w", err)
+	}
+	for _, img := range images {
+		if _, err := db.client.ImageRemove(ctx, img.ID,
+			image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
+			log.Printf("cleanup: could not remove image %s: %s", img.ID[:12], err)
+		}
+	}
+
+	if len(containers)+len(networks) > 0 {
+		log.Printf("cleanup: removed %d orphaned container(s) and %d network(s) from a previous run",
+			len(containers), len(networks))
+	}
 	return nil
 }
 

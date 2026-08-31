@@ -95,6 +95,15 @@ func main() {
 	)
 
 	// start controller
+	// Discard anything left by a previous run before serving. A node in a
+	// power-managed cluster is power-cycled routinely, and its containers
+	// and networks outlive the process that created them; without this they
+	// accumulate one network per wake until Docker's address pool is
+	// exhausted.
+	if err := tfBackend.RemoveOrphans(); err != nil {
+		log.Printf("cleanup: %s", err)
+	}
+
 	ms.StartController()
 
 	rproxyArgs := []string{fmt.Sprintf("%s:%d", RProxyListenAddress, RProxyConfigPort)}

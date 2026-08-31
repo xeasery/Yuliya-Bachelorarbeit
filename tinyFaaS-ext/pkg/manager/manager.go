@@ -37,6 +37,11 @@ type Backend interface {
 	Create(name string, env string, threads int, filedir string, envs map[string]string) (Handler, error)
 	Stop() error
 	Ping() error
+
+	// RemoveOrphans discards resources left by a previous run of this
+	// process, which the current one has no record of and would otherwise
+	// never clean up.
+	RemoveOrphans() error
 }
 
 type Handler interface {
