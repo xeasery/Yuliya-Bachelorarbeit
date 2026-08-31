@@ -117,18 +117,12 @@ func (db *DockerBackend) RemoveOrphans() error {
 		log.Printf("cleanup: removed orphaned network %s", n.Name)
 	}
 
-	// Images are pruned last: a network cannot be removed while a container
-	// is attached, and an image cannot be removed while a container exists.
-	images, err := db.client.ImageList(ctx, image.ListOptions{Filters: orphans})
-	if err != nil {
-		return fmt.Errorf("list orphaned images: %w", err)
-	}
-	for _, img := range images {
-		if _, err := db.client.ImageRemove(ctx, img.ID,
-			image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
-			log.Printf("cleanup: could not remove image %s: %s", img.ID[:12], err)
-		}
-	}
+	// Images are deliberately kept. They consume no address space, and the
+	// function image is the cache that makes a wake fast: rebuilding numpy
+	// and Pillow on a Raspberry Pi takes minutes, long enough to exhaust the
+	// deploy budget and fail the wake. Removing them here would mean every
+	// power cycle pays that cost again, which is the opposite of what a
+	// power-managed cluster needs.
 
 	if len(containers)+len(networks) > 0 {
 		log.Printf("cleanup: removed %d orphaned container(s) and %d network(s) from a previous run",
