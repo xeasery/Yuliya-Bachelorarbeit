@@ -197,13 +197,16 @@ Write your table down now — you need it for `nodes.json`:
 | Role | Host | IP | Relay | Ch | VC Bricklet |
 | --- | --- | --- | --- | --- | --- |
 | leader | controller | 192.168.0.199 | — | — | `26gZ` |
-| worker | pi1 | 192.168.0.133 | `2brr` | 1 | `26vg` |
-| worker | pi2 | 192.168.0.204 | `2brr` | 0 | `26mi` |
+| worker | pi1 | 192.168.0.133 | `2brr` | 0 | `26vg` |
+| worker | pi2 | 192.168.0.204 | `2bro` | 0 | `26mi` |
 | ~~worker~~ | ~~pi3~~ | ~~192.168.0.115~~ | ~~`2bro` 1~~ | | ~~`26iw`~~ — **excluded**, see below |
-| worker | pi4 | 192.168.0.207 | `2bro` | 0 | `26vf` |
+| worker | pi4 | 192.168.0.207 | `2bro` | 1 | `26vf` |
 
-**pi3 is excluded from the cluster.** It would not power down when instructed
-and later would not wake, and the cause was never established. Its relay
+**pi3 is excluded from the cluster.** It appeared faulty -- it would not power
+down when instructed and later would not wake -- but the cause was the relay
+mapping above being wrong for every worker, so the system was switching one
+machine while health-checking another. The node itself is fine and sits on
+`2brr` channel 1; it can be brought back by restoring its entry. Its relay
 channel is left open so it stays off, and it is neither scheduled nor
 measured. Three workers demonstrate the mechanism as well as four; the
 node count is a parameter of the setup, not of the design.
@@ -578,10 +581,10 @@ that relay** (0 or 1), not a cluster-wide index:
 
 | Node | `relay_uid` | `channel` |
 | --- | --- | --- |
-| pi1 | `2brr` | 1 |
-| pi2 | `2brr` | 0 |
-| pi3 | `2bro` | 1 |
-| pi4 | `2bro` | 0 |
+| pi1 | `2brr` | 0 |
+| pi2 | `2bro` | 0 |
+| pi4 | `2bro` | 1 |
+| ~~pi3~~ | ~~`2brr`~~ | ~~1~~ |
 
 Numbering them 0,1,2,3 on one relay is rejected at startup, since a dual relay
 has only two channels. Two nodes sharing a relay *and* channel is rejected

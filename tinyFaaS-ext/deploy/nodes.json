@@ -3,19 +3,20 @@
     "Cluster topology. Copy to /opt/tinyfaas/nodes.json on the controller",
     "and point NODES_CONFIG at it.",
     "",
-    "pi3 (192.168.0.115, relay 2bro channel 1, bricklet 26iw) is deliberately",
-    "excluded: it would not power down when told to and later would not wake,",
-    "and the cause was never established. Leave its relay channel open so it",
-    "stays off; it is not measured and not scheduled.",
+    "Relay assignment verified against the hardware. An earlier version had",
+    "every worker on the wrong channel, which made the system power one node",
+    "while health-checking another -- so a node left running looked stuck and",
+    "a node that never came up looked dead. Confirm with `make verify-wiring`",
+    "after any rewiring.",
+    "",
+    "pi3 sits on 2brr channel 1 and is currently excluded from the cluster.",
+    "Its apparent fault was this mapping error, not the node.",
     "",
     "The leader is dispatch_only: it schedules and powers nodes but never runs",
-    "a function itself, so its draw is a constant rather than something that",
-    "varies with load.",
+    "a function itself, so its draw is constant rather than load-dependent.",
     "",
-    "Node ids match the SSH aliases and physical labels. The energy logger",
-    "uses the same ids: ENERGY_NODES=\"leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf\".",
-    "",
-    "channel is the channel ON THAT RELAY (0 or 1), not a cluster-wide index."
+    "Energy logger uses the same ids:",
+    "ENERGY_NODES=\"leader=26gZ,pi1=26vg,pi2=26mi,pi4=26vf\"."
   ],
   "nodes": [
     {
@@ -28,13 +29,13 @@
       "address": "192.168.0.133:8000",
       "manager_address": "192.168.0.133:8080",
       "relay_uid": "2brr",
-      "channel": 1
+      "channel": 0
     },
     {
       "id": "pi2",
       "address": "192.168.0.204:8000",
       "manager_address": "192.168.0.204:8080",
-      "relay_uid": "2brr",
+      "relay_uid": "2bro",
       "channel": 0
     },
     {
@@ -42,7 +43,7 @@
       "address": "192.168.0.207:8000",
       "manager_address": "192.168.0.207:8080",
       "relay_uid": "2bro",
-      "channel": 0
+      "channel": 1
     }
   ]
 }
