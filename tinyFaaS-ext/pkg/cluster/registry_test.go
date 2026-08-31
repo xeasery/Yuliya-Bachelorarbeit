@@ -456,3 +456,59 @@ func TestEnforceSleeping_PowersOffNodesRecordedAsAsleep(t *testing.T) {
 		t.Errorf("an active node must be left alone, got %s", n.Status)
 	}
 }
+
+func TestRecoverDead_RestoresANodeThatIsActuallyAlive(t *testing.T) {
+	// The common case: the status is stale, not the node broken. It answers
+	// its health check, so it should come back without a power cycle.
+	node := newFakeNode()
+	defer node.close()
+
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, NewFunctionStore())
+	reg.AddNode(Node{
+		ID: "pi1", Address: "a:1", ManagerAddress: node.addr(),
+		RelayUID: "2brr", Channel: 0, Status: NodeDead, DeadSince: time.Now(),
+	})
+
+	reg.RecoverDead(time.Hour)
+
+	if n, _ := reg.GetNode("pi1"); n.Status != NodeActive {
+		t.Fatalf("a node answering /health should be restored, got %s", n.Status)
+	}
+	if ctrl.onCallCount() != 0 || ctrl.offCallCount() != 0 {
+		t.Error("restoring a live node must not touch its relay")
+	}
+}
+
+func TestRecoverDead_ReturnsAnUnreachableNodeAfterCooldown(t *testing.T) {
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, NewFunctionStore())
+	// Nothing listening on this address.
+	reg.AddNode(Node{
+		ID: "pi2", Address: "b:1", ManagerAddress: "127.0.0.1:1",
+		RelayUID: "2bro", Channel: 0, Status: NodeDead,
+		DeadSince: time.Now().Add(-10 * time.Minute),
+	})
+
+	reg.RecoverDead(5 * time.Minute)
+
+	if n, _ := reg.GetNode("pi2"); n.Status != NodeSleeping {
+		t.Fatalf("expected the node returned to sleeping for retry, got %s", n.Status)
+	}
+}
+
+func TestRecoverDead_LeavesANodeAloneInsideTheCooldown(t *testing.T) {
+	// Bounds how often a genuinely broken node is power-cycled.
+	ctrl := &fakePowerController{}
+	reg := NewRegistry(ctrl, NewFunctionStore())
+	reg.AddNode(Node{
+		ID: "pi4", Address: "c:1", ManagerAddress: "127.0.0.1:1",
+		RelayUID: "2bro", Channel: 1, Status: NodeDead, DeadSince: time.Now(),
+	})
+
+	reg.RecoverDead(5 * time.Minute)
+
+	if n, _ := reg.GetNode("pi4"); n.Status != NodeDead {
+		t.Fatalf("expected the node to stay dead inside the cooldown, got %s", n.Status)
+	}
+}

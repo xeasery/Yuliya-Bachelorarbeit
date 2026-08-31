@@ -203,7 +203,59 @@ func (r *Registry) SetStatus(id string, status NodeStatus) {
 
 	if n, ok := r.nodes[id]; ok {
 		n.Status = status
+		if status == NodeDead {
+			n.DeadSince = time.Now()
+		} else {
+			n.DeadSince = time.Time{}
+		}
 	}
+}
+
+// RecoverDead gives nodes marked dead a route back into the pool.
+//
+// Nothing else does: PickNode skips dead nodes entirely, and no path resets
+// the status, so a single failed wake removed a node until the process was
+// restarted. A transient failure -- a slow boot, a moment of packet loss --
+// therefore shrank the cluster permanently, and an experiment would go on
+// reporting a four-node configuration while running on three.
+//
+// A node that answers its health check is alive despite the label and is
+// restored directly, without a power cycle: that covers the common case of
+// the status being stale rather than the node being broken. Otherwise, after
+// a cooldown, it returns to sleeping so the next request that needs it
+// attempts a normal wake. Repeated failure re-marks it dead, so the cooldown
+// bounds how often a genuinely broken node is retried.
+func (r *Registry) RecoverDead(cooldown time.Duration) {
+	for _, n := range r.ListNodes() {
+		if n.Status != NodeDead {
+			continue
+		}
+
+		if healthy(n.ManagerAddress) {
+			log.Printf("recovery: %s answered its health check, restoring it", n.ID)
+			r.SetStatus(n.ID, NodeActive)
+			continue
+		}
+
+		if time.Since(n.DeadSince) >= cooldown {
+			log.Printf("recovery: returning %s to the pool to be retried", n.ID)
+			r.SetStatus(n.ID, NodeSleeping)
+		}
+	}
+}
+
+// healthy reports whether a node's management API answers right now. Unlike
+// waitForNodeReady it does not poll: this is a liveness check, not a wait.
+func healthy(managerAddr string) bool {
+	if managerAddr == "" {
+		return false
+	}
+	resp, err := healthClient.Get("http://" + managerAddr + "/health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // ActivateNode ensures the node with the given ID is active, powering it on

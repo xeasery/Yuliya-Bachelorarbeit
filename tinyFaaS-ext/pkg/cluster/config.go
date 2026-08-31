@@ -31,6 +31,11 @@ type ControllerConfig struct {
 	// LoadThreshold is the in-flight request count above which a node is no
 	// longer considered a preferred target by the scheduler.
 	LoadThreshold int
+
+	// DeadRetry is how long a node stays out of the pool after a failed
+	// wake. A node that answers its health check is restored sooner, without
+	// waiting for this.
+	DeadRetry time.Duration
 }
 
 func DefaultControllerConfig() ControllerConfig {
@@ -40,6 +45,7 @@ func DefaultControllerConfig() ControllerConfig {
 		CheckInterval:  10 * time.Second,
 		MinActiveNodes: 1,
 		LoadThreshold:  10,
+		DeadRetry:      5 * time.Minute,
 	}
 }
 
@@ -55,6 +61,7 @@ func ControllerConfigFromEnv() ControllerConfig {
 	cfg.CheckInterval = envDuration("CONTROLLER_INTERVAL", cfg.CheckInterval)
 	cfg.MinActiveNodes = envInt("MIN_ACTIVE_NODES", cfg.MinActiveNodes)
 	cfg.LoadThreshold = envInt("LOAD_THRESHOLD", cfg.LoadThreshold)
+	cfg.DeadRetry = envDuration("DEAD_RETRY", cfg.DeadRetry)
 
 	return cfg
 }

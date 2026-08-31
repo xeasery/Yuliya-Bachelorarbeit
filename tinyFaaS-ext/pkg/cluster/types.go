@@ -31,6 +31,10 @@ type Node struct {
 
 	LastUsed time.Time `json:"last_used"`
 
+	// DeadSince is when the node was last marked dead, used to pace recovery
+	// attempts. Zero unless Status is NodeDead.
+	DeadSince time.Time `json:"dead_since,omitempty"`
+
 	Local bool `json:"local"` // true if this is the current machine
 
 	// DispatchOnly excludes a node from executing functions: it schedules

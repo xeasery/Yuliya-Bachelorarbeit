@@ -23,6 +23,11 @@ func StartController(reg *Registry, cfg ControllerConfig) {
 		for {
 			time.Sleep(cfg.CheckInterval)
 
+			// Give failed nodes a way back before deciding what to scale
+			// down, so a transient failure does not permanently shrink the
+			// cluster.
+			reg.RecoverDead(cfg.DeadRetry)
+
 			nodes := reg.ListNodes()
 
 			// Count only nodes that can actually serve: a dispatch-only
