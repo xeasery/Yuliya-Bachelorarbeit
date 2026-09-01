@@ -835,29 +835,170 @@ per bricklet, so five nodes at the 10 ms default is 500 rows/second.
 
 ## Part 11 — Run the experiment
 
-From `k6_client_BA` on your Mac:
+**Run the client on the energy host, not on your Mac.** Two reasons, and the
+second is the one that matters:
+
+- The cluster is on `192.168.0.0/24`. A Mac on another network cannot reach
+  it, and an SSH tunnel that drops midway through a multi-hour run truncates
+  the result rather than failing it.
+- The proxy's invocation timestamps and the power samples then come from a
+  single clock. Clock skew between two machines misattributes energy to the
+  wrong invocations, and nothing in the output would look wrong.
+
+So everything below happens on the energy host (`scalable@141.23.28.219`),
+which already has the bricklets attached.
+
+### 11.1 — Prerequisites there
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
-
-export ORCH_USER=<user> ORCH_HOST=<leader-ip> ORCH_SSH_PORT=22
-export REMOTE_ENERGY_HOST=<energy host> REMOTE_ENERGY_USER=<user>
-export ENERGY_NODES="leader=26gZ,pi1=26mi,pi2=26vf,pi4=26iw"
-
-# baseline: leader started with POWER_AWARE=false
-EXPERIMENT_NAME=low_load_baseline    scripts/run_low_load.sh
-
-# treatment: leader restarted with POWER_AWARE=true
-EXPERIMENT_NAME=low_load_poweraware  scripts/run_low_load.sh
-
-python3 tools/compare_runs.py \
-    --baseline  results/processed/<server>/low_load_baseline/<run> \
-    --treatment results/processed/<server>/low_load_poweraware/<run> \
-    --output    results/plots/comparison.png
+git clone https://github.com/xeasery/k6_client_BA ~/k6_client_BA
+cd ~/k6_client_BA
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
-Run each configuration several times — one run per arm gives you no error
-bars, and wake timing in particular varies a lot.
+`k6`, `go` and `python3` must all be on PATH — Go builds the measurement
+proxy on every run.
+
+The leader needs **passwordless sudo** for the client's arm switching, which
+runs `systemctl` and edits the drop-in over a non-interactive SSH connection:
+
+```bash
+ssh pi@192.168.0.199 "sudo -n systemctl status tinyfaas >/dev/null && echo sudo-ok"
+```
+
+**Check:** that prints `sudo-ok`. Silence means sudo wants a password and
+every run will stop at its first step.
+
+Note that Part 10's key-based SSH and `NOPASSWD` rules for the *energy* host
+apply only to the older arrangement where the client drives the logger
+remotely. Here the logger runs on this same machine and is started by hand,
+so neither is needed for it.
+
+### 11.2 — Start the logger, once, by hand
+
+In its own terminal, left running across every arm of the session:
+
+```bash
+cd ~/energy-measurements
+sudo env ENERGY_NODES="leader=26gZ,pi1=26mi,pi2=26vf,pi4=26iw" \
+  ENERGY_PERIOD_MS=20 ./energy-logger
+```
+
+20 ms rather than the 10 ms default: four bricklets over a multi-hour session
+is a lot of rows, and 20 ms still resolves an invocation.
+
+**Check:** the newest CSV is growing, not just a header.
+
+```bash
+sleep 5; wc -l ~/energy-measurements/log/energy_*.csv
+```
+
+**Use `tmux`.** The session is hours long, and an SSH disconnect otherwise
+kills the whole thing — SIGHUP reaches the entire process group. Run both the
+logger and the arms inside it.
+
+### 11.3 — Run the arms
+
+```bash
+cd ~/k6_client_BA
+export ORCH_DIRECT=1 ORCH_HOST=192.168.0.199 ORCH_USER=pi
+export LOCAL_ENERGY_DIR=~/energy-measurements/log
+export ENERGY_NODES="leader=26gZ,pi1=26mi,pi2=26vf,pi4=26iw"
+export RATE=1 TIME_UNIT=2m DURATION=20m
+
+scripts/run_arm.sh baseline      # POWER_AWARE=false
+scripts/run_arm.sh poweraware    # POWER_AWARE=true
+```
+
+`run_arm.sh` sets the mode in the leader's drop-in, restarts it, confirms
+from the service log which mode the process actually entered, waits for the
+workers to reach the state that mode implies, deploys `edge`, and runs the
+benchmark. Every step is checked rather than assumed, because each of those
+failures yields a complete run with ordinary-looking numbers instead of an
+error.
+
+**Keep `TIME_UNIT` well above `NODE_IDLE_TIMEOUT`.** At the 60 s default, a
+`TIME_UNIT` of `1m` leaves an idle stretch shorter than the timeout, nothing
+ever powers down, and both arms measure the same thing.
+
+**Interleave the arms** rather than running all of one then all of the other.
+Anything that drifts over a few hours — room temperature, a background
+process — otherwise lands entirely on whichever arm ran later and reads as an
+effect. The comparison's error propagation assumes the arms are independent.
+
+```bash
+for i in 1 2 3; do
+    scripts/run_arm.sh baseline
+    scripts/run_arm.sh poweraware
+done
+scripts/run_arm.sh baseline
+scripts/run_arm.sh poweraware
+```
+
+Four per arm at 20 minutes each is roughly three hours including the wait for
+the cluster to settle between arms.
+
+**Check, on every run:** `energy coverage: OK` before `[energy] collected`.
+A logger that dies partway leaves a trace that is real and non-empty and
+covers only part of the window; integrating it under-reports energy in
+proportion to what it missed. The run refuses such a trace and reports no
+energy rather than a fraction of it, keeping it as `incomplete_*.csv` with an
+`energy_coverage.json` saying which node fell short. That run's node-state
+data is unaffected and still counts.
+
+### 11.4 — Compare
+
+```bash
+.venv/bin/python tools/compare_runs.py \
+    --baseline  results/processed/tinyfaas-cluster/low_load_baseline \
+    --treatment results/processed/tinyfaas-cluster/low_load_poweraware \
+    --output    results/plots/comparison.png \
+    --json      results/plots/comparison.json
+```
+
+Pointing each side at the experiment directory picks up every run under it.
+With more than one run per arm each metric becomes a mean ± sample standard
+deviation, and the change carries the standard error of the two means.
+
+Read `total_energy_j_raw`, or better `mean_power_w`. **Do not report
+`total_energy_j`** (the idle-subtracted figure) as a comparison between arms:
+the baseline arm's idle window is measured with every node awake and the
+power-aware arm's with the workers asleep, so the two subtract different
+baselines and the difference between them means nothing. Mean power is also
+tighter than total joules, since total energy scales with a run's window
+length and those vary slightly.
+
+### 11.5 — What the first session measured
+
+For reference, so a later run that disagrees wildly is recognisable as a
+fault rather than a finding. Four runs per arm, 2026-09-01, 1 request per
+2 minutes for 20 minutes:
+
+| | always-on | power-aware | change |
+| --- | --- | --- | --- |
+| Mean power | 9.53 ± 0.03 W | 5.02 ± 0.18 W | **−47.3% ± 1.0%** |
+| Node-seconds active | 4924 ± 5 | 1887 ± 17 | **−61.7% ± 0.2%** |
+| Latency p50 | 172 ± 1 ms | 49301 ± 961 ms | ▲ |
+| Wakes per run | 0 | 8.0, median 53 s each | |
+
+Per-node idle draw was leader 3.84 W, workers ~1.85 W each.
+
+Two things worth understanding before quoting these:
+
+**Node-time falls further than energy, and that is structural.** The leader
+is 40% of the cluster's idle power and never powers down, yet counts as one
+of four nodes. Node-seconds therefore overstates the achievable energy
+saving; the energy figure is the honest headline.
+
+**The energy figure is independently predictable from the node-time.** With
+`mean_active_nodes` at 1.51, expected power is 3.84 + 0.51 × 1.85 = 4.78 W
+against 5.02 W measured, the residual being boot transients. Two routes to
+the same number is the corroboration worth reporting.
+
+**This operating point is deliberately adversarial.** A 2-minute arrival gap
+against a 60 s idle timeout means a node sleeps after every single request
+and the next one pays a full boot. The energy saving is near its ceiling and
+so is the latency cost. Wider gaps trade less of one for less of the other.
 
 ---
 
@@ -872,7 +1013,8 @@ bars, and wake timing in particular varies a lot.
 | systemd unit enabled | ✓ | ✓ | ✗ |
 | `nodes.json` + env | ✓ | ✗ | ✗ |
 | brickd | ✓ (relays) | ✗ | ✓ (VC bricklets) |
-| Passwordless sudo | ✗ | ✗ | ✓ |
+| Passwordless sudo | ✓ (for `run_arm.sh`) | ✗ | ✓ (remote arrangement only) |
+| Runs the benchmark client | ✗ | ✗ | ✓ |
 | Power via relay | **never** | ✓ | ✗ |
 
 ## Troubleshooting
@@ -894,7 +1036,11 @@ bars, and wake timing in particular varies a lot.
 | Energy CSV has only a header | Wrong UID, or no bricklet connected. |
 | One node missing from the energy CSV | Its bricklet detached or its UID is wrong. It then contributes nothing to the total, which mimics a powered-off node — check the logger's warnings. |
 | A node's energy looks like another's | Bricklet-to-node mapping swapped; re-derive it one node at a time (3.2). |
-| Energy figures look implausible | Clock skew between the Mac and the energy host — see 1.4. |
-| Energy logger never starts during a run | sudo is prompting for a password over SSH — see Part 10. |
+| Energy figures look implausible | Clock skew between the machine timing invocations and the one sampling power — cannot occur when the client runs on the energy host (Part 11), which is why it does. |
+| Energy logger never starts during a run | sudo is prompting for a password over SSH — see Part 10. Does not apply when the logger is started by hand (11.2). |
+| `energy coverage: INCOMPLETE` at the end of a run | The logger died partway. That run has no energy but its node-state data still counts; restart the logger before the next arm. |
+| An energy figure marked `*` in the comparison | That arm has a run with no usable trace, excluded from the energy mean. `energy_coverage.json` in the run's raw directory names the node that fell short. |
+| One arm's energy mean low with a large spread | A partial trace was averaged in. Check each run's `mean_power_w`; the sound ones agree to within a few hundredths of a watt. |
+| Run stops on `ERROR: leader is not in <arm> mode` | The drop-in was edited but the service did not restart into it, or `POWER_AWARE` is absent from `cluster.conf`. |
 | Worker never comes back after a power cut | `systemctl is-enabled tinyfaas` — installed but not enabled. |
 | Workers stop booting after some days | SD card corruption from hard power cuts — see Part 0. |
