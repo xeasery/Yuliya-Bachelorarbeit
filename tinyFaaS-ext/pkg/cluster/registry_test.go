@@ -14,7 +14,7 @@ import (
 // fakePowerController records PowerOn/PowerOff calls instead of talking to
 // real Tinkerforge hardware.
 type fakePowerController struct {
-	mu        sync.Mutex
+	mu       sync.Mutex
 	onCalls   []int
 	offCalls  []int
 	onRelays  []string
@@ -68,12 +68,6 @@ type fakeNode struct {
 	deletes            []string
 	failUpload         map[string]bool
 	healthFailuresLeft int
-	// functionFailuresLeft models the gap this fixture exists to cover: a
-	// node whose management API has accepted a function but whose container
-	// is not yet listening, so the function endpoint 500s for a while after
-	// /upload returns OK.
-	functionFailuresLeft int
-	neverServe           map[string]bool
 
 	srv *httptest.Server
 }
@@ -123,33 +117,6 @@ func newFakeNode() *fakeNode {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Anything not matched above is a function invocation. The leader routes
-	// to this path once it believes the node is ready, so it is what the
-	// readiness probe has to check.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Only POST, matching how the scheduler forwards. A probe that used
-		// GET would find nothing here, which is exactly the bug this guards.
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		name := strings.TrimPrefix(r.URL.Path, "/")
-
-		fn.mu.Lock()
-		never := fn.neverServe[name]
-		starting := fn.functionFailuresLeft > 0
-		if starting {
-			fn.functionFailuresLeft--
-		}
-		fn.mu.Unlock()
-
-		if never || starting {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-
 	fn.srv = httptest.NewServer(mux)
 	return fn
 }
@@ -185,11 +152,8 @@ func withFastHealthCheck(t *testing.T) {
 	t.Helper()
 	prevAttempts, prevInterval := healthCheckAttempts, healthCheckInterval
 	healthCheckAttempts, healthCheckInterval = 3, 5*time.Millisecond
-	prevFnAttempts, prevFnInterval := functionReadyAttempts, functionReadyInterval
-	functionReadyAttempts, functionReadyInterval = 5, 5*time.Millisecond
 	t.Cleanup(func() {
 		healthCheckAttempts, healthCheckInterval = prevAttempts, prevInterval
-		functionReadyAttempts, functionReadyInterval = prevFnAttempts, prevFnInterval
 	})
 }
 
@@ -205,7 +169,6 @@ func TestActivateNode_WakesAndDeploysFunctions(t *testing.T) {
 	reg := NewRegistry(ctrl, funcs)
 	reg.AddNode(Node{
 		ID:             "edge-1",
-		Address:        node.addr(),
 		ManagerAddress: node.addr(),
 		Channel:        0,
 		Status:         NodeSleeping,
@@ -247,7 +210,6 @@ func TestActivateNode_FailedDeployDoesNotLeaveNodeServing(t *testing.T) {
 	reg := NewRegistry(ctrl, funcs)
 	reg.AddNode(Node{
 		ID:             "edge-1",
-		Address:        node.addr(),
 		ManagerAddress: node.addr(),
 		Channel:        0,
 		Status:         NodeSleeping,
@@ -290,7 +252,6 @@ func TestActivateNode_FailedDeployAndFailedPowerOffMarksDead(t *testing.T) {
 	reg := NewRegistry(ctrl, funcs)
 	reg.AddNode(Node{
 		ID:             "edge-1",
-		Address:        node.addr(),
 		ManagerAddress: node.addr(),
 		Channel:        0,
 		Status:         NodeSleeping,
@@ -317,7 +278,6 @@ func TestActivateNode_HealthyDeployStillActivates(t *testing.T) {
 	reg := NewRegistry(ctrl, funcs)
 	reg.AddNode(Node{
 		ID:             "edge-1",
-		Address:        node.addr(),
 		ManagerAddress: node.addr(),
 		Channel:        0,
 		Status:         NodeSleeping,
@@ -347,7 +307,6 @@ func TestActivateNode_FollowerWaitsForRealOutcome(t *testing.T) {
 	reg := NewRegistry(ctrl, NewFunctionStore())
 	reg.AddNode(Node{
 		ID:             "edge-1",
-		Address:        node.addr(),
 		ManagerAddress: node.addr(),
 		Channel:        0,
 		Status:         NodeSleeping,
@@ -507,9 +466,8 @@ func TestRecoverDead_RestoresANodeThatIsActuallyAlive(t *testing.T) {
 	ctrl := &fakePowerController{}
 	reg := NewRegistry(ctrl, NewFunctionStore())
 	reg.AddNode(Node{
-		ID: "pi1", Address: node.addr(),
-		ManagerAddress: node.addr(),
-		RelayUID:       "2brr", Channel: 0, Status: NodeDead, DeadSince: time.Now(),
+		ID: "pi1", Address: "a:1", ManagerAddress: node.addr(),
+		RelayUID: "2brr", Channel: 0, Status: NodeDead, DeadSince: time.Now(),
 	})
 
 	reg.RecoverDead(time.Hour)
@@ -552,107 +510,5 @@ func TestRecoverDead_LeavesANodeAloneInsideTheCooldown(t *testing.T) {
 
 	if n, _ := reg.GetNode("pi4"); n.Status != NodeDead {
 		t.Fatalf("expected the node to stay dead inside the cooldown, got %s", n.Status)
-	}
-}
-
-// A node whose management API accepted the function but whose container is
-// not yet listening must not be marked active. It was: /upload returning OK
-// was taken as readiness, so the leader routed the backlog to a node that
-// answered every request with a 500 until the container came up. Under
-// saturating load that cost 4.7% of a run's requests, all on the node that
-// woke first and so received the backlog alone.
-func TestActivateNode_WaitsForFunctionToAnswer(t *testing.T) {
-	withFastHealthCheck(t)
-
-	node := newFakeNode()
-	defer node.close()
-
-	// Accept the upload, then 500 on the function for the first two probes:
-	// deployed, not yet serving.
-	node.functionFailuresLeft = 2
-
-	ctrl := &fakePowerController{}
-	funcs := NewFunctionStore()
-	funcs.Set("edge", FunctionDef{Env: "python3", Threads: 1})
-	reg := NewRegistry(ctrl, funcs)
-	reg.AddNode(Node{
-		ID:             "edge-1",
-		Address:        node.addr(),
-		ManagerAddress: node.addr(),
-		RelayUID:       "2brr",
-		Channel:        0,
-		Status:         NodeSleeping,
-	})
-
-	if err := reg.ActivateNode("edge-1"); err != nil {
-		t.Fatalf("expected the wake to wait out a slow container, got %v", err)
-	}
-
-	n, _ := reg.GetNode("edge-1")
-	if n.Status != NodeActive {
-		t.Fatalf("expected the node active once its function answered, got %s", n.Status)
-	}
-
-	// The probes that saw a 500 must have been retried rather than accepted.
-	node.mu.Lock()
-	left := node.functionFailuresLeft
-	node.mu.Unlock()
-	if left != 0 {
-		t.Fatalf("expected the probe to retry past both failures, %d left", left)
-	}
-}
-
-// A function that never answers is not a usable node. Treated like a failed
-// deploy: powered back off and returned to sleeping rather than left awake
-// drawing power while unable to serve.
-func TestActivateNode_UnconfirmedProbeStillActivates(t *testing.T) {
-	withFastHealthCheck(t)
-
-	node := newFakeNode()
-	defer node.close()
-	node.neverServe = map[string]bool{"edge": true}
-
-	ctrl := &fakePowerController{}
-	funcs := NewFunctionStore()
-	funcs.Set("edge", FunctionDef{Env: "python3", Threads: 1})
-	reg := NewRegistry(ctrl, funcs)
-	reg.AddNode(Node{
-		ID:             "edge-1",
-		Address:        node.addr(),
-		ManagerAddress: node.addr(),
-		RelayUID:       "2brr",
-		Channel:        0,
-		Status:         NodeSleeping,
-	})
-
-	// Fails open: an unconfirmed probe must leave the node no worse off than
-	// if the check did not exist. Taking it out of service instead means a
-	// probe that is wrong about a healthy node costs the entire cluster,
-	// which is precisely what happened when this probe used the wrong method.
-	if err := reg.ActivateNode("edge-1"); err != nil {
-		t.Fatalf("expected an unconfirmed probe to activate anyway, got %v", err)
-	}
-
-	n, _ := reg.GetNode("edge-1")
-	if n.Status != NodeActive {
-		t.Fatalf("expected the node active despite the unconfirmed probe, got %s", n.Status)
-	}
-	if ctrl.offCallCount() != 0 {
-		t.Fatalf("expected the node left powered on, got %d PowerOff call(s)", ctrl.offCallCount())
-	}
-}
-
-// The probe must use the method the scheduler forwards with. Using GET meant
-// it exercised a path real traffic never takes; the node answered it
-// differently, no wake ever confirmed, and every node was returned to sleep.
-func TestWaitForFunctionsReady_UsesPost(t *testing.T) {
-	withFastHealthCheck(t)
-
-	node := newFakeNode()
-	defer node.close()
-
-	// The fixture answers POST and 500s anything else, as the real node does.
-	if stuck := waitForFunctionsReady(node.addr(), []string{"edge"}); stuck != nil {
-		t.Fatalf("expected a POST probe to be answered, got stuck=%v", stuck)
 	}
 }

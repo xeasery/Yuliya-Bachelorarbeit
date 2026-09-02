@@ -233,32 +233,6 @@ as a node marked dead for no visible reason.
 | `MIN_ACTIVE_NODES` | `1` | Floor the controller will not scale below. |
 | `LOAD_THRESHOLD` | `10` | In-flight requests above which a node stops being preferred. |
 | `TINKERFORGE_HOST` / `TINKERFORGE_PORT` / `TINKERFORGE_UID` | `localhost` / `4223` / — | Relay connection. |
-| `NODE_BOOT_TIMEOUT` | `3m` | How long a woken node has to answer `/health`. |
-| `DEPLOY_TIMEOUT` | `5m` | How long a function deploy to a woken node may take. |
-| `FUNCTION_READY_TIMEOUT` | `60s` | How long a deployed function has to start answering before the wake is treated as failed. |
-
-##### Why a node is not active the moment its function deploys
-
-A node's management API returns OK from `/upload` once it has accepted the
-function and started its containers — not once those containers are
-listening. Marking the node active there hands the scheduler a node that
-cannot serve yet, and under load the backlog arrives immediately: measured on
-a 4-node cluster at 10 req/s, 4.7% of a run's requests failed with 500s in
-the first minute, almost all of them on the node that woke first and so took
-the backlog alone.
-
-The wake therefore ends by polling the function on the address the scheduler
-will actually route to, with the same method it forwards with, until it
-answers.
-
-The probe **fails open**: a function that has not answered within
-`FUNCTION_READY_TIMEOUT` is logged and the node is activated anyway. This is
-deliberate. A probe that is wrong about a healthy node would otherwise cost
-the entire cluster, while the gap it guards costs a few seconds of requests
-on one node — and the first version of this check was wrong that way, probing
-with GET where the scheduler forwards POST, which took the error rate from
-4.7% to 100%. Only deployment failure, which is unambiguous, keeps a node out
-of the pool.
 
 #### Baseline vs. power-aware
 
