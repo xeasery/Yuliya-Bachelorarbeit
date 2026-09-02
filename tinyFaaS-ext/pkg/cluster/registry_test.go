@@ -127,6 +127,12 @@ func newFakeNode() *fakeNode {
 	// to this path once it believes the node is ready, so it is what the
 	// readiness probe has to check.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Only POST, matching how the scheduler forwards. A probe that used
+		// GET would find nothing here, which is exactly the bug this guards.
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
 
 		fn.mu.Lock()
@@ -599,7 +605,7 @@ func TestActivateNode_WaitsForFunctionToAnswer(t *testing.T) {
 // A function that never answers is not a usable node. Treated like a failed
 // deploy: powered back off and returned to sleeping rather than left awake
 // drawing power while unable to serve.
-func TestActivateNode_FunctionNeverAnswers(t *testing.T) {
+func TestActivateNode_UnconfirmedProbeStillActivates(t *testing.T) {
 	withFastHealthCheck(t)
 
 	node := newFakeNode()
@@ -619,16 +625,34 @@ func TestActivateNode_FunctionNeverAnswers(t *testing.T) {
 		Status:         NodeSleeping,
 	})
 
-	if err := reg.ActivateNode("edge-1"); err == nil {
-		t.Fatal("expected the wake to fail when the function never answers")
+	// Fails open: an unconfirmed probe must leave the node no worse off than
+	// if the check did not exist. Taking it out of service instead means a
+	// probe that is wrong about a healthy node costs the entire cluster,
+	// which is precisely what happened when this probe used the wrong method.
+	if err := reg.ActivateNode("edge-1"); err != nil {
+		t.Fatalf("expected an unconfirmed probe to activate anyway, got %v", err)
 	}
 
 	n, _ := reg.GetNode("edge-1")
-	if n.Status != NodeSleeping {
-		t.Fatalf("expected the node returned to sleeping, got %s", n.Status)
+	if n.Status != NodeActive {
+		t.Fatalf("expected the node active despite the unconfirmed probe, got %s", n.Status)
 	}
-	if ctrl.offCallCount() != 1 {
-		t.Fatalf("expected the node powered back off rather than left awake and unusable, got %d PowerOff call(s)",
-			ctrl.offCallCount())
+	if ctrl.offCallCount() != 0 {
+		t.Fatalf("expected the node left powered on, got %d PowerOff call(s)", ctrl.offCallCount())
+	}
+}
+
+// The probe must use the method the scheduler forwards with. Using GET meant
+// it exercised a path real traffic never takes; the node answered it
+// differently, no wake ever confirmed, and every node was returned to sleep.
+func TestWaitForFunctionsReady_UsesPost(t *testing.T) {
+	withFastHealthCheck(t)
+
+	node := newFakeNode()
+	defer node.close()
+
+	// The fixture answers POST and 500s anything else, as the real node does.
+	if stuck := waitForFunctionsReady(node.addr(), []string{"edge"}); stuck != nil {
+		t.Fatalf("expected a POST probe to be answered, got stuck=%v", stuck)
 	}
 }

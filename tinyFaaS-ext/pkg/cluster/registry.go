@@ -409,22 +409,21 @@ func (r *Registry) wakeNode(id, relayUID string, channel int, managerAddress, ad
 	//
 	// Probe the address the scheduler will actually use, so what is verified
 	// is the path the traffic takes rather than a proxy for it.
+	// Deliberately fails open. An earlier version took the node out of
+	// service when the probe did not confirm readiness, which is the wrong
+	// trade in both directions: a probe that is merely wrong about a healthy
+	// node then costs the whole cluster, while the bug being fixed costs a
+	// few seconds of requests on one node. It was wrong -- it used GET where
+	// the scheduler uses POST -- and every wake failed, taking the error rate
+	// from 4.7% to 100%.
+	//
+	// So a probe that cannot confirm readiness logs and proceeds, leaving the
+	// node no worse off than before this check existed. Only deployment
+	// failure, which is unambiguous, keeps a node out of the pool.
 	if stuck := waitForFunctionsReady(address, r.funcs.Names()); len(stuck) > 0 {
-		// Same treatment as a failed deploy, and for the same reason: a node
-		// that cannot serve must not be marked active, and one that is awake
-		// without serving burns exactly the energy this system exists to
-		// save. Sleeping rather than dead keeps it eligible for a retry.
-		log.Printf("node %s: function(s) %v never answered within %s, returning it to sleep",
+		log.Printf("node %s: function(s) %v did not answer within %s; activating anyway -- "+
+			"early requests may fail while the container finishes starting",
 			id, stuck, time.Duration(functionReadyAttempts)*functionReadyInterval)
-
-		if err := r.ctrl.PowerOff(relayUID, channel); err != nil {
-			log.Printf("node %s: failed to power off after unready function: %v", id, err)
-			r.SetStatus(id, NodeDead)
-			return fmt.Errorf("node %s: function(s) %v never answered and it could not be powered off: %w", id, stuck, err)
-		}
-
-		r.SetStatus(id, NodeSleeping)
-		return fmt.Errorf("node %s: function(s) %v never answered after deploy", id, stuck)
 	}
 
 	r.SetStatus(id, NodeActive)
@@ -570,7 +569,17 @@ func waitForFunctionsReady(address string, names []string) []string {
 			time.Sleep(functionReadyInterval)
 		}
 		for name := range pending {
-			resp, err := healthClient.Get("http://" + address + "/" + name)
+			// POST with an empty body, because POST is what the scheduler
+			// uses to forward (see pkg/http). Probing with GET exercises a
+			// path real traffic never takes, and the node answers it
+			// differently -- which made an earlier version of this probe
+			// fail against a node that was serving perfectly well.
+			req, err := http.NewRequest(http.MethodPost,
+				"http://"+address+"/"+name, bytes.NewReader(nil))
+			if err != nil {
+				continue
+			}
+			resp, err := healthClient.Do(req)
 			if err != nil {
 				continue
 			}

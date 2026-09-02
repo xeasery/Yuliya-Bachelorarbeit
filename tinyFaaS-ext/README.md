@@ -248,10 +248,17 @@ the first minute, almost all of them on the node that woke first and so took
 the backlog alone.
 
 The wake therefore ends by polling the function on the address the scheduler
-will actually route to, until it answers. A function that never answers
-within `FUNCTION_READY_TIMEOUT` is treated like a failed deploy: the node is
-powered back off and returned to sleeping, rather than left awake and unable
-to serve.
+will actually route to, with the same method it forwards with, until it
+answers.
+
+The probe **fails open**: a function that has not answered within
+`FUNCTION_READY_TIMEOUT` is logged and the node is activated anyway. This is
+deliberate. A probe that is wrong about a healthy node would otherwise cost
+the entire cluster, while the gap it guards costs a few seconds of requests
+on one node — and the first version of this check was wrong that way, probing
+with GET where the scheduler forwards POST, which took the error rate from
+4.7% to 100%. Only deployment failure, which is unambiguous, keeps a node out
+of the pool.
 
 #### Baseline vs. power-aware
 
