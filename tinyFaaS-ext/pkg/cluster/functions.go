@@ -1,6 +1,9 @@
 package cluster
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // FunctionDef captures everything needed to redeploy a function to a node
 // via its management API. Powering a node off drops its containers with
@@ -40,6 +43,22 @@ func (s *FunctionStore) Remove(name string) {
 	defer s.mu.Unlock()
 
 	delete(s.funcs, name)
+}
+
+// Names returns the known function names, sorted. Cheaper than All when the
+// caller only needs to address the functions rather than deploy them -- the
+// definitions carry a base64 zip each.
+func (s *FunctionStore) Names() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]string, 0, len(s.funcs))
+	for k := range s.funcs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+
+	return out
 }
 
 // All returns a point-in-time copy of every known function definition.

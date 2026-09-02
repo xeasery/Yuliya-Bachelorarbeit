@@ -233,6 +233,25 @@ as a node marked dead for no visible reason.
 | `MIN_ACTIVE_NODES` | `1` | Floor the controller will not scale below. |
 | `LOAD_THRESHOLD` | `10` | In-flight requests above which a node stops being preferred. |
 | `TINKERFORGE_HOST` / `TINKERFORGE_PORT` / `TINKERFORGE_UID` | `localhost` / `4223` / — | Relay connection. |
+| `NODE_BOOT_TIMEOUT` | `3m` | How long a woken node has to answer `/health`. |
+| `DEPLOY_TIMEOUT` | `5m` | How long a function deploy to a woken node may take. |
+| `FUNCTION_READY_TIMEOUT` | `60s` | How long a deployed function has to start answering before the wake is treated as failed. |
+
+##### Why a node is not active the moment its function deploys
+
+A node's management API returns OK from `/upload` once it has accepted the
+function and started its containers — not once those containers are
+listening. Marking the node active there hands the scheduler a node that
+cannot serve yet, and under load the backlog arrives immediately: measured on
+a 4-node cluster at 10 req/s, 4.7% of a run's requests failed with 500s in
+the first minute, almost all of them on the node that woke first and so took
+the backlog alone.
+
+The wake therefore ends by polling the function on the address the scheduler
+will actually route to, until it answers. A function that never answers
+within `FUNCTION_READY_TIMEOUT` is treated like a failed deploy: the node is
+powered back off and returned to sleeping, rather than left awake and unable
+to serve.
 
 #### Baseline vs. power-aware
 
